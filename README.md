@@ -60,7 +60,7 @@ But since we are working in discrete space (x), we use the Discrete Fourier Tran
 
 **Applying the Momentum Shift in Fourier Space**
 • ```np.fft.fftfreq(len(x), x[1]-x[0])``` computes the momentum grid (since p=ℏk, and k is the Fourier frequency).
-• Multiplying by ```np.exp(1j * p_grid * shift_p)``` applies the phase shift corresponding to a momentum displacement.
+• Multiplying by ```np.exp(1j * p * shift_p)``` applies the phase shift corresponding to a momentum displacement.
 • After modifying the wavefunction in momentum space, we transform back to position space using ```np.fft.iff```.
 • ```np.fft.fftshift```ensures the zero-frequency component is centered (important for visualization and correct phase shifts).
 
@@ -71,8 +71,8 @@ An alternative Interpretation would be the Displacement Operator D(α), that shi
 _Step 3 - Simulating the GKP error correction_
 **1 - Measuring the position (q) Modulo √π**
 ``` 
-q_values = x[np.abs(psi)**2 > 0.1*np.max(np.abs(psi)**2)]  # Find positions where the wavefunction has significant probability
-q_syndromes = q_values % np.sqrt(np.pi)                     # Compute those positions modulo √π 
+    q_mean = np.sum(x * np.abs(psi)**2) * dx   # Expectation value of position
+    q_syndrome = q_mean % np.sqrt(np.pi)       # Compute those positions modulo √π 
 ```
 A perfect GKP state has peaks at integer multiples of √π in position space (q = n√π), if an error shifts that state (e.g. by ∂q), the peaks move to ```q = n√π + ∂q```. Hence, to detect an error, we measure how far the peaks are from the nearest GKP lattice point (this is ∂q mod √π)
 
@@ -81,10 +81,12 @@ Suppose the peak is at position ```q = 3√π +0.4``` then the ```q.mod√π = 0
 
 **2 - Measuring the momentum (p) Modulo √π**
 ```
-psi_p = np.fft.fftshift(np.fft.fft(np.fft.fftshift(psi)))  # Fourier transform to momentum space
-p = np.fft.fftfreq(len(x), x[1]-x[0]) * 2*np.pi            # Get corresponding momentum values
-p_values = p[np.abs(psi_p)**2 > 0.1*np.max(np.abs(psi_p)**2)]  # Find peaks in momentum space
-p_syndromes = p_values % np.sqrt(np.pi)                     # Compute momenta modulo √π
+    psi_p = np.fft.fftshift(np.fft.fft(np.fft.fftshift(psi))) * dx / np.sqrt(2 * np.pi)     # Fourier transform to momentum space
+    p = np.fft.fftshift(np.fft.fftfreq(N, d=dx)) * 2 * np.pi                                # Get corresponding momentum values
+
+    dp = p[1] - p[0]                                                                        # Momentum grid spacing
+    p_mean = np.sum(p * np.abs(psi_p)**2) * dp                                              # Expectation value of momentum
+    p_syndrome = p_mean % np.sqrt(np.pi)                                                    # Compute those positions modulo √π
 ```
 In momentum space, a perfect GKP state also has peaks at ```p=n√π```, a momentum shift (e.g. ∂p) oves the peaks to ```p = n√π + ∂p```. The syndrome ```p mod √π``` measures how far teh peaks are shifted from the ideal lattice. The measuring of the momentum differs a bit from the measuring of the position because we have to apply the Fourier Transform beforehand. 
 The position (q) and momentum (p) are Fourier duals in quantum mechanics, which means, a **shift position** (q → q + ∂q) **introduces a phase in momentum space** (ψ(p)→ψ(p)⋅e^(−ip⋅∂q)) and a **shift in momentum** (p → p + ∂p) iss directly measurable in the Fourier-transformed wavefunction.  
@@ -101,6 +103,60 @@ Shifted peaks:      |  • |  • |  • |  • |    (• = peaks shifted by δq
 The Fourier transform of the GKP state looks like another grid of peaks (but in momentum).
 A shift in q → phase oscillations in p-space.
 A shift in p → direct displacement of momentum peaks.
+
+
+
+_Step 4 - Animation_
+<u>The animation shows:</u>
+
+1. Original state (blue solid line) – The ideal GKP state.
+2. Shifted state (red dashed line) – The state after applying position and momentum errors.
+3. Corrected state (green dotted line) – The state after applying feedback corrections based on syndrome measurements.
+
+<u>Additionally, the animation displays:</u>
+
+• The GKP grid (gray dotted lines) at intervals of √π, representing the stabilizer conditions.
+• Syndrome measurements (Δq, Δp), showing the detected shift errors.
+• Applied corrections, illustrating how the state is gradually restored.
+
+**How it Works**
+The original and shifted states are plotted with the GKP grid drawn at ```q = n√π``` for ```n ∈ [-4, 4]```. The algorithm determines the smallest shift needed to realign the state with the GKP grid:
+    • If q_syndrome > √π/2, it corrects by q_syndrome - √π (to minimize displacement).
+    • Otherwise, it corrects by q_syndrome (no large jumps).
+    • The same logic applies to p_syndrome.
+The Animation is divided into two halfs:
+    • First Half (Frames 0-15): Displays the measured syndromes.
+    • Second Half (Frames 16-60): Gradually applies the correction, showing the state returning to the ideal grid. 
+
+
+
+_Step 5 - Fidelity_
+In this code, ```compute_fidelity``` function calculates how well the error-corrected GKP state (```psi_corr```) matches the original ideal GKP state (```psi```).
+**Mathematical Definition** : The fidelity F between two quantum states ∣ψ⟩ and ∣ϕ⟩ => F=∣⟨ψ∣ϕ⟩∣^2
+**Code Implementation** : ```np.abs(np.sum(np.conj(psi1) * psi2) * dx)**2```
+
+CAREFUL: numerical issues (grid resolution, normalization, boundary effects) can distort results. Add these checks to the code:
+```
+# Check normalization
+print("Original norm:", np.sum(np.abs(psi)**2) * dx)
+print("Corrected norm:", np.sum(np.abs(psi_corr)**2) * dx)
+
+# Plot overlap
+plt.plot(x, np.real(np.conj(psi) * psi_corr), label="Re($\psi^* \psi_{corr}$)")
+plt.plot(x, np.abs(psi)**2, label="Original $|\psi|^2$")
+plt.plot(x, np.abs(psi_corr)**2, label="Corrected $|\psi_{corr}|^2$")
+plt.legend(); plt.show()
+```
+If fidelity is unexpectedly low:
+1. Increase grid resolution (smaller dx).
+2. Widen the spatial domain (larger x range).
+3. Plot states to visually diagnose mismatches.
+
+For GKP states, fidelity should approach 1 for small shifts and good correction. If not, the error is likely in ```gkp_syndrome_management``` and ```gkp_correct```.
+
+
+
+
 
 
 

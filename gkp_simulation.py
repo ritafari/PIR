@@ -39,15 +39,18 @@ def plot_gkp_wavefunction(x, psi):
 # Step 2 - Simulating the GKP errors
 # Common Errors for GKP codes are small shifts in position or momentum
 def apply_shift_error(psi, shift_q, shift_p, x):
-    """
-    Apply shift errors in position and momentum
-    """
-    # Position shift is multiplication by exp(i*p̂*shift_q)
+    N = len(x)
+    dx = x[1] - x[0]
+    p = np.fft.fftshift(np.fft.fftfreq(N, d=dx)) * 2 * np.pi
+
+    # Apply momentum shift (in position space)
     psi_shifted = psi * np.exp(1j * x * shift_p)
-    
-    # Momentum shift is convolution with exp(i*q̂*shift_p)
-    # For discrete x, this becomes a Fourier shift
-    psi_shifted = np.fft.fftshift(np.fft.ifft(np.fft.fft(np.fft.fftshift(psi_shifted)) * np.exp(1j * np.fft.fftfreq(len(x), x[1]-x[0]) * shift_q)))
+
+    # Apply position shift (in momentum space)
+    psi_p = np.fft.fftshift(np.fft.fft(np.fft.fftshift(psi_shifted)))
+    psi_p *= np.exp(1j * p * shift_q)
+    psi_shifted = np.fft.ifftshift(np.fft.ifft(np.fft.ifftshift(psi_p)))
+
     return psi_shifted
 
 def plot_shifted_wavefunction(x, psi_shifted):
@@ -63,17 +66,32 @@ def gkp_syndrome_measurement(psi, x):
     """
     Measure the syndrome (shift from lattice)
     """
-    # Measure q mod sqrt(pi)
-    q_values = x[np.abs(psi)**2 > 0.1*np.max(np.abs(psi)**2)]      # Find positions where the wavefunction has significant probability
-    q_syndromes = q_values % np.sqrt(np.pi)                        # Compute those positions modulo √π
-    
-    # Measure p mod sqrt(pi) via Fourier transform
-    psi_p = np.fft.fftshift(np.fft.fft(np.fft.fftshift(psi)))      # Fourier transform to momentum space
-    p = np.fft.fftfreq(len(x), x[1]-x[0]) * 2*np.pi                # Get corresponding momentum values
-    p_values = p[np.abs(psi_p)**2 > 0.1*np.max(np.abs(psi_p)**2)]  # Find peaks in momentum space
-    p_syndromes = p_values % np.sqrt(np.pi)                        # Compute those positions modulo √π
-    
-    return np.mean(q_syndromes), np.mean(p_syndromes)
+    dx = x[1] - x[0]
+    N = len(x)
+
+    # Position expectation ⟨q⟩
+    q_mean = np.sum(x * np.abs(psi)**2) * dx
+    q_syndrome = q_mean % np.sqrt(np.pi)
+
+    # Fourier transform to momentum space (properly normalized)
+    psi_p = np.fft.fftshift(np.fft.fft(np.fft.fftshift(psi))) * dx / np.sqrt(2 * np.pi)
+    p = np.fft.fftshift(np.fft.fftfreq(N, d=dx)) * 2 * np.pi
+
+    dp = p[1] - p[0]
+    p_mean = np.sum(p * np.abs(psi_p)**2) * dp
+    p_syndrome = p_mean % np.sqrt(np.pi)
+
+    return q_syndrome, p_syndrome
+
+def plot_syndrome_wavefunction(x, psi, q_syndrome, p_syndrome):
+    plt.plot(x, np.abs(psi)**2) # Shows the probability density
+    plt.axvline(q_syndrome, color='r', linestyle='--', label='q_syndrome')
+    plt.axvline(p_syndrome, color='g', linestyle='--', label='p_syndrome')
+    plt.xlabel('Position (q)')
+    plt.ylabel('Probability density')
+    plt.title('Syndrome Measurement')
+    plt.legend()
+    plt.show()
 
 def gkp_correct(psi, x, q_syndrome, p_syndrome):
     """
@@ -149,7 +167,14 @@ def gkp_correction_animation(psi, x, q_syndrome, p_syndrome, save_path="gkp_corr
     print(f"Animation saved to {save_path}")
 
 
-# Step 5 - Main function to run the simulation
+
+# Step 5 - Calculate fidelity
+def compute_fidelity(psi1, psi2, dx):
+    return np.abs(np.sum(np.conj(psi1) * psi2) * dx)**2
+
+
+
+# Step 6 - Main function to run the simulation
 # Parameters
 delta = 0.2  # Squeezing parameter
 shift_q, shift_p = 0.3, 0.4  # Random errors to apply
@@ -168,11 +193,17 @@ print(f"Measured syndromes - q: {q_syn:.3f}, p: {p_syn:.3f}")
 
 # Correct errors
 psi_corr = gkp_correct(psi_err, x, q_syn, p_syn)
-plot_gkp_wavefunction(x, psi_corr)
+plot_syndrome_wavefunction(x, psi, q_syn, p_syn)
 
 # Calculate fidelity
-fidelity = np.abs(np.sum(psi.conj() * psi_corr))**2
-print(f"Recovery fidelity: {fidelity:.4f}")
+psi_corr = gkp_correct(psi_err, x, q_syn, p_syn)
+fidelity = compute_fidelity(psi, psi_corr, x[1]-x[0])
+print(f"Fidelity after correction: {fidelity:.4f}")
 
 # Generate and display animation
 gkp_correction_animation(psi, x, q_syn, p_syn)
+
+# Print the original and shifted states: check if they match to know effectiveness of the code
+print(f"Applied shift_q: {shift_q}, Measured q_syndrome: {q_syn}")
+print(f"Applied shift_p: {shift_p}, Measured p_syndrome: {p_syn}")
+
