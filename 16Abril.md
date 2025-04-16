@@ -143,6 +143,10 @@ Call it with ```fidelity_vs_shift_plot(psi, x, delta)```
         plot_corrected_momentum(psi_corr, x)
 [DONE]
 
+### Relevancy of each implemented plots:
+• Position/Momentum Plots: Show the state's structure and how errors affect it
+• Fidelity vs Shift Plot: Demonstrates the correction capability across different error magnitudes
+• Animation: Visualizes the correction process dynamically
 
 
 ## Updated Workflow
@@ -197,6 +201,12 @@ print(f"Applied shift_p: {shift_p}, Measured p_syndrome: {p_syn}")
 
 4. Use logical GKP states like |0_L⟩ or |+_L⟩ (by adjusting which lattice sites you use) to test logical preservation.
 
+
+
+## Remaining issues so far:
+1. Fidelity is low - For small shifts (0.1, 0.2) we should be able to expect higher fidelity (>0.9) with proper implementation. 
+2. Syndrome measurement mismatch - issue in how position shifts are being measured and applied.
+3. Animation function correctness - try to understand it cause i'm pretty sure it's fucked ... 
 
 
 

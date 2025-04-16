@@ -19,11 +19,13 @@ def gkp_state(delta, N_cutoff=50):
     # Ideal GKP state is a sum of delta functions
     # Finite-energy version uses Gaussian peaks
     psi = np.zeros_like(x, dtype=np.complex128)
-    n_max = int((x[-1] - 3*delta) / (2 * np.sqrt(np.pi)))
-    for n in range(-n_max, n_max + 1):
-        psi += np.exp(-(x - 2*n*np.sqrt(np.pi))**2/(2*delta**2))
-    
-    # Normalize: The integral of |ψ|² over all space must be 1!!
+
+    # Use proper normalization for each peak
+    for n in range(-N_cutoff, N_cutoff + 1):
+        peak_center = 2 * n * np.sqrt(np.pi)
+        psi += np.exp(-(x - peak_center)**2/(2*delta**2)) * np.exp(-delta**2 * peak_center**2 / 2)
+
+    # Add normalization for the finite-energy version
     norm = np.sqrt(quad(lambda x_val: np.interp(x_val, x, np.abs(psi)**2), -10, 10)[0])
     psi /= norm
     
@@ -98,18 +100,17 @@ def gkp_syndrome_measurement(psi, x):
     dx = x[1] - x[0]
     N = len(x)
 
-    # ⟨q⟩
-    q_mean = np.sum(x * np.abs(psi)**2) * dx
-    q_nearest = np.round(q_mean / np.sqrt(np.pi)) * np.sqrt(np.pi)
-    q_syndrome = q_mean - q_nearest
+    # Use modulo sqrt(pi) to find the fractional shift
+    # This better captures the periodic nature of GKP states
+    q_shifts = np.mod(x + np.sqrt(np.pi)/2, np.sqrt(np.pi)) - np.sqrt(np.pi)/2
+    q_syndrome = np.sum(q_shifts * np.abs(psi)**2) * dx
 
-    # ⟨p⟩
+    # Similarly for momentum
     psi_p = np.fft.fftshift(np.fft.fft(np.fft.fftshift(psi))) * dx / np.sqrt(2 * np.pi)
-    p = np.fft.fftshift(np.fft.fftfreq(N, d=dx)) * 2 * np.pi
+    p = np.fft.fftshift(np.fft.fftfreq(len(x), d=dx)) * 2 * np.pi
     dp = p[1] - p[0]
-    p_mean = np.sum(p * np.abs(psi_p)**2) * dp
-    p_nearest = np.round(p_mean / np.sqrt(np.pi)) * np.sqrt(np.pi)
-    p_syndrome = p_mean - p_nearest
+    p_shifts = np.mod(p + np.sqrt(np.pi)/2, np.sqrt(np.pi)) - np.sqrt(np.pi)/2
+    p_syndrome = np.sum(p_shifts * np.abs(psi_p)**2) * dp
 
     return q_syndrome, p_syndrome
 
@@ -117,9 +118,16 @@ def gkp_correct(psi, x, q_syndrome, p_syndrome):
     """
     Apply correction based on syndrome
     """
+    # Apply correction with proper boundary conditions
     psi_corr = apply_shift_error(psi, -q_syndrome, -p_syndrome, x)
+    
+    # Additional stabilization step - project to nearest logical state
     dx = x[1] - x[0]
-    psi_corr /= np.sqrt(np.sum(np.abs(psi_corr)**2) * dx)  # Normalize
+    q_shifts = np.mod(x + np.sqrt(np.pi)/2, np.sqrt(np.pi)) - np.sqrt(np.pi)/2
+    psi_corr *= np.exp(-q_shifts**2 / (2*delta**2))  # Soft projection
+    
+    # Normalize
+    psi_corr /= np.sqrt(np.sum(np.abs(psi_corr)**2) * dx)
     return psi_corr
 
 def plot_corrected_position(psi_corr, x):
@@ -187,21 +195,22 @@ def gkp_correction_animation(psi, x, q_syndrome, p_syndrome, save_path="gkp_corr
 
     def update(frame):
         alpha = min(1.0, frame / 30)
-
-        # Apply interpolated correction
-        psi_step = apply_shift_error(psi_err, -alpha * q_corr, -alpha * p_corr, x)
-        line_corr.set_ydata(np.abs(psi_step)**2)  # Correct usage of set_ydata
-
+        
+        # Apply correction in both quadratures simultaneously
+        psi_step = apply_shift_error(psi_err, -alpha * q_syndrome, -alpha * p_syndrome, x)
+        
+        # Calculate intermediate fidelity
+        current_fidelity = compute_fidelity(psi, psi_step, dx)
+        
+        # Update plots
+        line_corr.set_ydata(np.abs(psi_step)**2)
         text_info.set_text(
-            f"Syndrome:\nΔq = {q_syndrome:.3f}\nΔp = {p_syndrome:.3f}\nCorrection Step: {alpha:.2f}"
+            f"Applied Shifts: Δq={shift_q:.3f}, Δp={shift_p:.3f}\n"
+            f"Measured Syndromes: Δq={q_syndrome:.3f}, Δp={p_syndrome:.3f}\n"
+            f"Correction Progress: {alpha*100:.1f}%"
         )
-
-        if alpha == 1.0:
-            curr_fidelity = compute_fidelity(psi, psi_step, dx)
-            text_fidelity.set_text(f"Fidelity: {curr_fidelity:.6f}")
-        else:
-            text_fidelity.set_text("")
-
+        text_fidelity.set_text(f"Current Fidelity: {current_fidelity:.4f}")
+        
         return line_corr, text_info, text_fidelity
 
     ani = FuncAnimation(fig, update, frames=60, interval=50, blit=True)  # Correct usage of blit
@@ -213,7 +222,20 @@ def gkp_correction_animation(psi, x, q_syndrome, p_syndrome, save_path="gkp_corr
 
 # Step 5 - Calculate fidelity
 def compute_fidelity(psi1, psi2, dx):
-    return np.abs(np.sum(np.conj(psi1) * psi2) * dx)**2
+    overlap = np.abs(np.sum(np.conj(psi1) * psi2) * dx)**2
+    # Also compute logical fidelity by projecting to nearest peak
+    return overlap
+
+def logical_fidelity(psi, x, delta):
+    dx = x[1] - x[0]
+    # Project to nearest logical state
+    logical_psi = np.zeros_like(psi)
+    for n in range(-5, 6):
+        peak = np.exp(-(x - 2*n*np.sqrt(np.pi))**2/(2*delta**2))
+        peak /= np.sqrt(np.sum(np.abs(peak)**2) * dx)
+        overlap = np.abs(np.sum(np.conj(peak) * psi) * dx)**2
+        logical_psi += overlap * peak
+    return np.abs(np.sum(np.conj(psi) * logical_psi) * dx)**2
 
 def fidelity_vs_shift_plot(psi, x, delta, shift_range=(-0.6, 0.6), steps=30):
     """
