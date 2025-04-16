@@ -4,42 +4,61 @@ from scipy.linalg import expm
 from scipy.special import hermite
 from scipy.integrate import quad
 from matplotlib.animation import FuncAnimation
+import warnings
+from scipy.integrate import IntegrationWarning
 
 
-# Step 1 - Generating the GKP state
+
+# Step 1 - Mapping function to setup multiple figures
+def setup_figures():
+    plt.close('all')  # Close any existing figures
+    fig1 = plt.figure(1, figsize=(8, 6))
+    fig2 = plt.figure(2, figsize=(8, 6))
+    fig3 = plt.figure(3, figsize=(8, 6))
+    fig4 = plt.figure(4, figsize=(8, 6))
+    return fig1, fig2, fig3, fig4
+
+
+
+# Step 2 - Generating the GKP state
 def gkp_state(delta, N_cutoff=50):
     """
     Generate finite-energy GKP state.
     delta: squeezing parameter (smaller = better protection)
     N_cutoff: Fock state truncation
     """
-    # Position basis
     x = np.linspace(-10, 10, 2048)
-    
-    # Ideal GKP state is a sum of delta functions
-    # Finite-energy version uses Gaussian peaks
     psi = np.zeros_like(x, dtype=np.complex128)
-
-    # Use proper normalization for each peak
+    
+    # Generate peaks with proper normalization
     for n in range(-N_cutoff, N_cutoff + 1):
         peak_center = 2 * n * np.sqrt(np.pi)
-        psi += np.exp(-(x - peak_center)**2/(2*delta**2)) * np.exp(-delta**2 * peak_center**2 / 2)
-
-    # Add normalization for the finite-energy version
-    norm = np.sqrt(quad(lambda x_val: np.interp(x_val, x, np.abs(psi)**2), -10, 10)[0])
-    psi /= norm
+        psi += np.exp(-(x - peak_center)**2/(2*delta**2))
     
+    # Better integration with increased limit and warning suppression
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=IntegrationWarning)
+        norm = np.sqrt(quad(lambda x_val: np.interp(x_val, x, np.abs(psi)**2), 
+                      -10, 10, 
+                      limit=200)[0])  # Increased limit from 50 to 200
+    
+    psi /= norm
     return x, psi
 
-def plot_initial_position(psi, x):
+def plot_initial_position(psi, x, fig=None):
+    if fig is None:
+        fig = plt.figure()
+    plt.figure(fig.number)
     plt.plot(x, np.abs(psi)**2)
     plt.title('Initial GKP State (Position)')
     plt.xlabel('q')
     plt.ylabel('|ψ(q)|²')
     plt.grid(True)
-    plt.show()
 
-def plot_initial_momentum(psi, x):
+def plot_initial_momentum(psi, x, fig=None):
+    if fig is None:
+        fig = plt.figure()
+    plt.figure(fig.number)
     N = len(x)
     dx = x[1] - x[0]
     p = np.fft.fftshift(np.fft.fftfreq(N, d=dx)) * 2 * np.pi
@@ -49,11 +68,10 @@ def plot_initial_momentum(psi, x):
     plt.xlabel('p')
     plt.ylabel('|ψ(p)|²')
     plt.grid(True)
-    plt.show()
 
 
 
-# Step 2 - Simulating the GKP errors
+# Step 3 - Simulating the GKP errors
 # Common Errors for GKP codes are small shifts in position or momentum
 def apply_shift_error(psi, shift_q, shift_p, x):
     N = len(x)
@@ -70,15 +88,20 @@ def apply_shift_error(psi, shift_q, shift_p, x):
 
     return psi_shifted
 
-def plot_error_position(psi_err, x):
+def plot_error_position(psi_err, x, fig=None):
+    if fig is None:
+        fig = plt.figure()
+    plt.figure(fig.number)
     plt.plot(x, np.abs(psi_err)**2)
     plt.title('After Shift Error (Position)')
     plt.xlabel('q')
     plt.ylabel('|ψ(q)|²')
     plt.grid(True)
-    plt.show()
 
-def plot_error_momentum(psi_err, x):
+def plot_error_momentum(psi_err, x, fig=None):
+    if fig is None:
+        fig = plt.figure()
+    plt.figure(fig.number)
     N = len(x)
     dx = x[1] - x[0]
     p = np.fft.fftshift(np.fft.fftfreq(N, d=dx)) * 2 * np.pi
@@ -88,11 +111,10 @@ def plot_error_momentum(psi_err, x):
     plt.xlabel('p')
     plt.ylabel('|ψ(p)|²')
     plt.grid(True)
-    plt.show()
 
 
 
-# Step 3 - Simulating the GKP error correction
+# Step 4 - Simulating the GKP error correction
 def gkp_syndrome_measurement(psi, x):
     """
     Measure the syndrome (shift from lattice)
@@ -114,7 +136,7 @@ def gkp_syndrome_measurement(psi, x):
 
     return q_syndrome, p_syndrome
 
-def gkp_correct(psi, x, q_syndrome, p_syndrome):
+def gkp_correct(psi, x, q_syndrome, p_syndrome, delta):
     """
     Apply correction based on syndrome
     """
@@ -130,15 +152,20 @@ def gkp_correct(psi, x, q_syndrome, p_syndrome):
     psi_corr /= np.sqrt(np.sum(np.abs(psi_corr)**2) * dx)
     return psi_corr
 
-def plot_corrected_position(psi_corr, x):
+def plot_corrected_position(psi_corr, x, fig=None):
+    if fig is None:
+        fig = plt.figure()
+    plt.figure(fig.number)
     plt.plot(x, np.abs(psi_corr)**2)
     plt.title('After Correction (Position)')
     plt.xlabel('q')
     plt.ylabel('|ψ(q)|²')
     plt.grid(True)
-    plt.show()
 
-def plot_corrected_momentum(psi_corr, x):
+def plot_corrected_momentum(psi_corr, x, fig=None):
+    if fig is None:
+        fig = plt.figure()
+    plt.figure(fig.number)
     N = len(x)
     dx = x[1] - x[0]
     p = np.fft.fftshift(np.fft.fftfreq(N, d=dx)) * 2 * np.pi
@@ -148,24 +175,22 @@ def plot_corrected_momentum(psi_corr, x):
     plt.xlabel('p')
     plt.ylabel('|ψ(p)|²')
     plt.grid(True)
-    plt.show()
 
 
 
-# Step 4 - Animating the error correction process
-def gkp_correction_animation(psi, x, q_syndrome, p_syndrome, save_path="gkp_correction.gif"):
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))  # Correct usage of figsize
-    
+# Step 5 - Animating the error correction process
+def gkp_correction_animation(psi, x, q_syndrome, p_syndrome, shift_q, shift_p, delta, save_path="gkp_correction.gif"):
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
     dx = x[1] - x[0]
     
     # Step 1: Apply known error
     psi_err = apply_shift_error(psi, shift_q, shift_p, x)
 
-    # Step 2: Measure syndrome
+    # Step 2: Measure syndrome (redundant since we pass them, but keeps logic)
     q_syndrome, p_syndrome = gkp_syndrome_measurement(psi_err, x)
 
-    # Step 3: Compute correction
-    psi_corr_target = gkp_correct(psi_err, x, q_syndrome, p_syndrome)
+    # Step 3: Compute correction WITH delta parameter
+    psi_corr_target = gkp_correct(psi_err, x, q_syndrome, p_syndrome, delta)
 
     # Fidelity at the end
     # Removed unused variable final_fidelity
@@ -220,7 +245,7 @@ def gkp_correction_animation(psi, x, q_syndrome, p_syndrome, save_path="gkp_corr
 
 
 
-# Step 5 - Calculate fidelity
+# Step 6 - Calculate fidelity
 def compute_fidelity(psi1, psi2, dx):
     overlap = np.abs(np.sum(np.conj(psi1) * psi2) * dx)**2
     # Also compute logical fidelity by projecting to nearest peak
@@ -240,6 +265,7 @@ def logical_fidelity(psi, x, delta):
 def fidelity_vs_shift_plot(psi, x, delta, shift_range=(-0.6, 0.6), steps=30):
     """
     Compute and plot fidelity vs. various shift errors.
+    Now properly includes delta parameter.
     """
     dx = x[1] - x[0]
     shift_vals = np.linspace(*shift_range, steps)
@@ -249,10 +275,10 @@ def fidelity_vs_shift_plot(psi, x, delta, shift_range=(-0.6, 0.6), steps=30):
         for j, dp in enumerate(shift_vals):
             psi_err = apply_shift_error(psi, dq, dp, x)
             q_syn, p_syn = gkp_syndrome_measurement(psi_err, x)
-            psi_corr = gkp_correct(psi_err, x, q_syn, p_syn)
+            psi_corr = gkp_correct(psi_err, x, q_syn, p_syn, delta)  # Now passing delta
             fidelity_map[i, j] = compute_fidelity(psi, psi_corr, dx)
 
-    # Plot
+    # Plotting code remains the same...
     plt.figure(figsize=(8, 6))
     plt.imshow(fidelity_map, extent=(shift_range[0], shift_range[1], shift_range[0], shift_range[1]),
                origin='lower', aspect='auto', cmap='viridis')
@@ -266,39 +292,53 @@ def fidelity_vs_shift_plot(psi, x, delta, shift_range=(-0.6, 0.6), steps=30):
 
 
 
-# Step 6 - Main function to run the simulation
-# Parameters
-delta = 0.2 # Squeezing parameter
-shift_q, shift_p = 0.1, 0.2  # Random errors to apply
+# Step 7 - Main function to run the simulation
+def main():
+    # Parameters
+    delta = 0.2 # Squeezing parameter
+    shift_q, shift_p = 0.1, 0.2  # Random errors to apply
 
-# Generate GKP state
-x, psi = gkp_state(delta)
-plot_initial_position(psi, x)
-plot_initial_momentum(psi, x)
+    # Setup all figures first
+    fig1, fig2, fig3, fig4 = setup_figures()
+    fig5, fig6 = plt.figure(5), plt.figure(6)
 
-# Apply errors
-psi_err = apply_shift_error(psi, shift_q, shift_p, x)
-plot_error_position(psi_err, x)
-plot_error_momentum(psi_err, x)
+    # Generate GKP state
+    x, psi = gkp_state(delta)
 
-# Measure syndrome
-q_syn, p_syn = gkp_syndrome_measurement(psi_err, x)
-print(f"Measured syndromes - q: {q_syn:.3f}, p: {p_syn:.3f}")
+    # Plot initial states
+    plot_initial_position(psi, x, fig1)
+    plot_initial_momentum(psi, x, fig2)
 
-# Correct errors
-psi_corr = gkp_correct(psi_err, x, q_syn, p_syn)
-plot_corrected_position(psi_corr, x)
-plot_corrected_momentum(psi_corr, x)
+    # Apply errors
+    psi_err = apply_shift_error(psi, shift_q, shift_p, x)
+    plot_error_position(psi_err, x, fig3)
+    plot_error_momentum(psi_err, x, fig4)
 
-# Calculate fidelity
-fidelity = compute_fidelity(psi, psi_corr, x[1]-x[0])
-print(f"Fidelity after correction: {fidelity:.4f}")
+    # Measure syndrome
+    q_syn, p_syn = gkp_syndrome_measurement(psi_err, x)
+    print(f"Measured syndromes - q: {q_syn:.3f}, p: {p_syn:.3f}")
 
-# Generate and display animation
-gkp_correction_animation(psi, x, q_syn, p_syn)
-fidelity_vs_shift_plot(psi, x, delta)
+    # Correct errors
+    psi_corr = gkp_correct(psi_err, x, q_syn, p_syn, delta)
 
-# Print the original and shifted states: check if they match to know effectiveness of the code
-print(f"Applied shift_q: {shift_q}, Measured q_syndrome: {q_syn}")
-print(f"Applied shift_p: {shift_p}, Measured p_syndrome: {p_syn}")
+    # Plot corrected states
+    plot_corrected_position(psi_corr, x, fig5)
+    plot_corrected_momentum(psi_corr, x, fig6)
 
+    # Calculate fidelity
+    fidelity = compute_fidelity(psi, psi_corr, x[1]-x[0])
+    print(f"Fidelity after correction: {fidelity:.4f}")
+
+    # Generate and display animation
+    gkp_correction_animation(psi, x, q_syn, p_syn, shift_q, shift_p, delta)
+    fidelity_vs_shift_plot(psi, x, delta)
+
+    # Print the original and shifted states: check if they match to know effectiveness of the code
+    print(f"Applied shift_q: {shift_q}, Measured q_syndrome: {q_syn}")
+    print(f"Applied shift_p: {shift_p}, Measured p_syndrome: {p_syn}")
+
+    # Show all plots at once
+    plt.show()
+
+if __name__ == "__main__":
+    main()
