@@ -78,8 +78,8 @@ def apply_shift_error(psi, shift_q, shift_p, x):
     dx = x[1] - x[0]
     p = np.fft.fftshift(np.fft.fftfreq(N, d=dx)) * 2 * np.pi
 
-    # Apply momentum shift (in position space)
-    psi_shifted = psi * np.exp(1j * x * shift_p)
+    # Apply momentum shift (in position space) with proper sign
+    psi_shifted = psi * np.exp(-1j * x * shift_p)   # Negative sign for momentum
 
     # Apply position shift (in momentum space)
     psi_p = np.fft.fftshift(np.fft.fft(np.fft.fftshift(psi_shifted)))
@@ -112,6 +112,25 @@ def plot_error_momentum(psi_err, x, fig=None):
     plt.ylabel('|ψ(p)|²')
     plt.grid(True)
 
+def test_shift_measurement(delta, test_shifts=[0.1, 0.3, 0.5]):
+    """
+    Test function to verify shift measurement accuracy
+    """
+    x = np.linspace(-10, 10, 2048)
+    _, psi = gkp_state(delta)
+    
+    print("Shift Measurement Verification:")
+    print("-----------------------------")
+    print("Applied Shift | Measured q_syndrome | Measured p_syndrome")
+    
+    for shift in test_shifts:
+        # Apply same shift to both quadratures
+        psi_shifted = apply_shift_error(psi, shift, shift, x)
+        
+        # Measure syndromes
+        q_syn, p_syn = gkp_syndrome_measurement(psi_shifted, x)
+        
+        print(f"{shift:12.3f} | {q_syn:19.3f} | {p_syn:18.3f}")
 
 
 # Step 4 - Simulating the GKP error correction
@@ -122,18 +141,21 @@ def gkp_syndrome_measurement(psi, x):
     dx = x[1] - x[0]
     N = len(x)
 
-    # Use modulo sqrt(pi) to find the fractional shift
-    # This better captures the periodic nature of GKP states
-    q_shifts = np.mod(x + np.sqrt(np.pi)/2, np.sqrt(np.pi)) - np.sqrt(np.pi)/2
-    q_syndrome = np.sum(q_shifts * np.abs(psi)**2) * dx
-
-    # Similarly for momentum
-    psi_p = np.fft.fftshift(np.fft.fft(np.fft.fftshift(psi))) * dx / np.sqrt(2 * np.pi)
-    p = np.fft.fftshift(np.fft.fftfreq(len(x), d=dx)) * 2 * np.pi
+    # POSITION (q) measurement
+    # Calculate the fractional part of position relative to √π lattice
+    q_shifts = (x + np.sqrt(np.pi)/2) % np.sqrt(np.pi) - np.sqrt(np.pi)/2
+    q_syndrome = -np.sum(q_shifts * np.abs(psi)**2) * dx  # Note negative sign (otherwise it would be a shift in the opposite direction)
+    
+    # MOMENTUM (p) measurement - improved precision
+    psi_p = np.fft.fftshift(np.fft.fft(np.fft.fftshift(psi))) * dx / np.sqrt(2*np.pi)
+    p = np.fft.fftshift(np.fft.fftfreq(N, d=dx)) * 2 * np.pi
     dp = p[1] - p[0]
-    p_shifts = np.mod(p + np.sqrt(np.pi)/2, np.sqrt(np.pi)) - np.sqrt(np.pi)/2
-    p_syndrome = np.sum(p_shifts * np.abs(psi_p)**2) * dp
-
+    
+    # Use complex phase for more accurate momentum measurement
+    theta_p = np.angle(np.sum(psi_p * np.exp(-1j*p*np.sqrt(np.pi)/2)) * dp)
+    p_syndrome = (theta_p + np.pi) % (2*np.pi) - np.pi  # Wrapped to [-π, π]
+    p_syndrome *= np.sqrt(np.pi)/np.pi  # Scale to GKP lattice
+    
     return q_syndrome, p_syndrome
 
 def gkp_correct(psi, x, q_syndrome, p_syndrome, delta):
@@ -313,6 +335,7 @@ def main():
     psi_err = apply_shift_error(psi, shift_q, shift_p, x)
     plot_error_position(psi_err, x, fig3)
     plot_error_momentum(psi_err, x, fig4)
+    test_shift_measurement(delta, test_shifts=[0.1, 0.3, 0.5])
 
     # Measure syndrome
     q_syn, p_syn = gkp_syndrome_measurement(psi_err, x)

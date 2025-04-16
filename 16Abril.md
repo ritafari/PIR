@@ -208,5 +208,89 @@ print(f"Applied shift_p: {shift_p}, Measured p_syndrome: {p_syn}")
 2. Syndrome measurement mismatch - issue in how position shifts are being measured and applied.
 3. Animation function correctness - try to understand it cause i'm pretty sure it's fucked ... 
 
+<u>Dealing with the Syndrome Measurement Mismatch</u>
+The momentum measurement works because FFTs handle periodic boundary conditions naturally. Position measurement doesn't account for the GKP lattice periodicity properly. The current implementation issues would be that the direct expectation value calculation doesn't respect the √π-periodic nature of GKP states => The modulo operation needs to be applied differently for position measurements. 
 
+### gkp_syndrome_measurement
+**current** ```gkp_syndrome_measurement```code:
+``` dx = x[1] - x[0]
+    N = len(x)
 
+    # Use modulo sqrt(pi) to find the fractional shift
+    # This better captures the periodic nature of GKP states
+    q_shifts = np.mod(x + np.sqrt(np.pi)/2, np.sqrt(np.pi)) - np.sqrt(np.pi)/2
+    q_syndrome = np.sum(q_shifts * np.abs(psi)**2) * dx
+
+    # Similarly for momentum
+    psi_p = np.fft.fftshift(np.fft.fft(np.fft.fftshift(psi))) * dx / np.sqrt(2 * np.pi)
+    p = np.fft.fftshift(np.fft.fftfreq(len(x), d=dx)) * 2 * np.pi
+    dp = p[1] - p[0]
+    p_shifts = np.mod(p + np.sqrt(np.pi)/2, np.sqrt(np.pi)) - np.sqrt(np.pi)/2
+    p_syndrome = np.sum(p_shifts * np.abs(psi_p)**2) * dp
+
+    return q_syndrome, p_syndrome
+```
+**Revised** version
+```dx = x[1] - x[0]
+    N = len(x)
+    
+    # POSITION (q) measurement
+    # Calculate the fractional part of position relative to √π lattice
+    q_shifts = (x + np.sqrt(np.pi)/2) % np.sqrt(np.pi) - np.sqrt(np.pi)/2
+    q_syndrome = np.sum(q_shifts * np.abs(psi)**2) * dx
+    
+    # Similarly for momentum
+    psi_p = np.fft.fftshift(np.fft.fft(np.fft.fftshift(psi))) * dx / np.sqrt(2 * np.pi)
+    p = np.fft.fftshift(np.fft.fftfreq(len(x), d=dx)) * 2 * np.pi
+    dp = p[1] - p[0]
+    p_shifts = np.mod(p + np.sqrt(np.pi)/2, np.sqrt(np.pi)) - np.sqrt(np.pi)/2
+    p_syndrome = np.sum(p_shifts * np.abs(psi_p)**2) * dp
+    
+    return q_syndrome, p_syndrome
+```
+
+### Test Shift Function
+```def test_shift_measurement(delta=0.2, test_shifts=[0.1, 0.3, 0.5]):
+    """
+    Test function to verify shift measurement accuracy
+    """
+    x = np.linspace(-10, 10, 2048)
+    _, psi = gkp_state(delta)
+    
+    print("Shift Measurement Verification:")
+    print("-----------------------------")
+    print("Applied Shift | Measured q_syndrome | Measured p_syndrome")
+    
+    for shift in test_shifts:
+        # Apply same shift to both quadratures
+        psi_shifted = apply_shift_error(psi, shift, shift, x)
+        
+        # Measure syndromes
+        q_syn, p_syn = gkp_syndrome_measurement(psi_shifted, x)
+        
+        print(f"{shift:12.3f} | {q_syn:19.3f} | {p_syn:18.3f}")
+```
+
+**Expected outcome**
+Shift Measurement Verification:
+-----------------------------
+Applied Shift | Measured q_syndrome | Measured p_syndrome
+       0.100 |               0.100 |              0.100
+       0.300 |               0.300 |              0.300
+       0.500 |               0.500 |              0.500
+
+**My Outcome**
+Shift Measurement Verification:
+-----------------------------
+Applied Shift | Measured q_syndrome | Measured p_syndrome
+       0.100 |              -0.100 |              0.084
+       0.300 |              -0.300 |              0.274
+       0.500 |              -0.495 |              0.425
+
+=> Fix the sign q in ```gkp_syndrome_measurement```
+instead of ```q_syndrome = np.sum(q_shifts * np.abs(psi)**2) * dx```
+we do ```q_syndrome = -np.sum(q_shifts * np.abs(psi)**2) * dx  # Note negative sign```
+
+=> Fix the sign in ```apply_shift_error```
+instead of ```psi_shifted = psi * np.exp(1j * x * shift_p)```
+we do ```psi_shifted = psi * np.exp(-1j * x * shift_p)  # Negative sign for momentum```
