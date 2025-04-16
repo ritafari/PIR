@@ -5,8 +5,9 @@ Quantic Error Correcting Code (QECCs)
 
 
 
-***GKP***
-_Step 1: Setting Up Your Environment_
+## GKP
+### Step 1: Setting Up Your Environment
+
 After discussing with our teacher during the 14/04/2025 session, we were advised to use the qiskit library in order to simplify the simulation of our QECCs.
 Hence, first, make sure you have the necessary packages installed:
 ```pip install qiskit qiskit-aer numpy matplotli```
@@ -15,7 +16,8 @@ I preferred not to use qiskit in mine because i had grepping errors in my folder
 
 
 
-_Step 2: Simulating GKP States in Qiskit_
+### Step 2: Simulating GKP States in Qiskit
+
 While qiskit does not have built-in GKP states, we can approximate them by superposing Gaussian peaks:
 ```def gkp_state(d, delta, logical_zero)```
 Here d is the number of peaks to include in the superposition, delta is the width of each Gaussian peak and logical_zero, if True, returns   |0> state, else |1> state.
@@ -39,7 +41,8 @@ For the ideal GKP |0⟩ state, ψ(x) would be an infinite sum of delta functions
 
 
 
-_Step 3: Simulating Errors_
+### Step 3: Simulating Errors
+
 *Position Shift*
 We shift the position by multiplying by ```exp(i*p̂*shift_q)```, in this code it is implemented by ```x * shift_p```.
 In the position basis:
@@ -68,7 +71,8 @@ An alternative Interpretation would be the Displacement Operator D(α), that shi
 
 
 
-_Step 3 - Simulating the GKP error correction_
+### Step 4 - Simulating the GKP error correction
+
 **1 - Measuring the position (q) Modulo √π**
 ``` 
     q_mean = np.sum(x * np.abs(psi)**2) * dx   # Expectation value of position
@@ -106,7 +110,8 @@ A shift in p → direct displacement of momentum peaks.
 
 
 
-_Step 4 - Animation_
+### Step 5 - Animation
+
 <u>The animation shows:</u>
 
 1. Original state (blue solid line) – The ideal GKP state.
@@ -130,7 +135,8 @@ The Animation is divided into two halfs:
 
 
 
-_Step 5 - Fidelity_
+### Step 6 - Fidelity
+
 In this code, ```compute_fidelity``` function calculates how well the error-corrected GKP state (```psi_corr```) matches the original ideal GKP state (```psi```).
 **Mathematical Definition** : The fidelity F between two quantum states ∣ψ⟩ and ∣ϕ⟩ => F=∣⟨ψ∣ϕ⟩∣^2
 **Code Implementation** : ```np.abs(np.sum(np.conj(psi1) * psi2) * dx)**2```
@@ -161,7 +167,8 @@ For GKP states, fidelity should approach 1 for small shifts and good correction.
 
 
 
-_Coming up_
+### Coming up
+
 1. Performance Analysis: Run many trials with random shifts to calculate average fidelity
 2. Noise Models: Implement more realistic noise models (Gaussian shifts, photon loss)
 3. Concatenation: Study GKP codes concatenated with other QEC codes

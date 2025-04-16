@@ -14,12 +14,13 @@ def gkp_state(delta, N_cutoff=50):
     N_cutoff: Fock state truncation
     """
     # Position basis
-    x = np.linspace(-10, 10, 1000)
+    x = np.linspace(-10, 10, 2048)
     
     # Ideal GKP state is a sum of delta functions
     # Finite-energy version uses Gaussian peaks
     psi = np.zeros_like(x, dtype=np.complex128)
-    for n in range(-10, 11):
+    n_max = int((x[-1] - 3*delta) / (2 * np.sqrt(np.pi)))
+    for n in range(-n_max, n_max + 1):
         psi += np.exp(-(x - 2*n*np.sqrt(np.pi))**2/(2*delta**2))
     
     # Normalize: The integral of |ψ|² over all space must be 1!!
@@ -28,12 +29,26 @@ def gkp_state(delta, N_cutoff=50):
     
     return x, psi
 
-def plot_gkp_wavefunction(x, psi):
-    plt.plot(x, np.abs(psi)**2) # Shows the probability density
-    plt.xlabel('Position (q)')
-    plt.ylabel('Probability density')
-    plt.title('Finite-energy GKP state')
+def plot_initial_position(psi, x):
+    plt.plot(x, np.abs(psi)**2)
+    plt.title('Initial GKP State (Position)')
+    plt.xlabel('q')
+    plt.ylabel('|ψ(q)|²')
+    plt.grid(True)
     plt.show()
+
+def plot_initial_momentum(psi, x):
+    N = len(x)
+    dx = x[1] - x[0]
+    p = np.fft.fftshift(np.fft.fftfreq(N, d=dx)) * 2 * np.pi
+    psi_p = np.fft.fftshift(np.fft.fft(np.fft.fftshift(psi))) * dx / np.sqrt(2*np.pi)
+    plt.plot(p, np.abs(psi_p)**2)
+    plt.title('Initial GKP State (Momentum)')
+    plt.xlabel('p')
+    plt.ylabel('|ψ(p)|²')
+    plt.grid(True)
+    plt.show()
+
 
 
 # Step 2 - Simulating the GKP errors
@@ -53,12 +68,26 @@ def apply_shift_error(psi, shift_q, shift_p, x):
 
     return psi_shifted
 
-def plot_shifted_wavefunction(x, psi_shifted):
-    plt.plot(x, np.abs(psi_shifted)**2) # Shows the probability density
-    plt.xlabel('Position (q)')
-    plt.ylabel('Probability density')
-    plt.title('Shifted GKP state')
+def plot_error_position(psi_err, x):
+    plt.plot(x, np.abs(psi_err)**2)
+    plt.title('After Shift Error (Position)')
+    plt.xlabel('q')
+    plt.ylabel('|ψ(q)|²')
+    plt.grid(True)
     plt.show()
+
+def plot_error_momentum(psi_err, x):
+    N = len(x)
+    dx = x[1] - x[0]
+    p = np.fft.fftshift(np.fft.fftfreq(N, d=dx)) * 2 * np.pi
+    psi_p = np.fft.fftshift(np.fft.fft(np.fft.fftshift(psi_err))) * dx / np.sqrt(2*np.pi)
+    plt.plot(p, np.abs(psi_p)**2)
+    plt.title('After Shift Error (Momentum)')
+    plt.xlabel('p')
+    plt.ylabel('|ψ(p)|²')
+    plt.grid(True)
+    plt.show()
+
 
 
 # Step 3 - Simulating the GKP error correction
@@ -69,99 +98,113 @@ def gkp_syndrome_measurement(psi, x):
     dx = x[1] - x[0]
     N = len(x)
 
-    # Position expectation ⟨q⟩
+    # ⟨q⟩
     q_mean = np.sum(x * np.abs(psi)**2) * dx
-    q_syndrome = q_mean % np.sqrt(np.pi)
+    q_nearest = np.round(q_mean / np.sqrt(np.pi)) * np.sqrt(np.pi)
+    q_syndrome = q_mean - q_nearest
 
-    # Fourier transform to momentum space (properly normalized)
+    # ⟨p⟩
     psi_p = np.fft.fftshift(np.fft.fft(np.fft.fftshift(psi))) * dx / np.sqrt(2 * np.pi)
     p = np.fft.fftshift(np.fft.fftfreq(N, d=dx)) * 2 * np.pi
-
     dp = p[1] - p[0]
     p_mean = np.sum(p * np.abs(psi_p)**2) * dp
-    p_syndrome = p_mean % np.sqrt(np.pi)
+    p_nearest = np.round(p_mean / np.sqrt(np.pi)) * np.sqrt(np.pi)
+    p_syndrome = p_mean - p_nearest
 
     return q_syndrome, p_syndrome
-
-def plot_syndrome_wavefunction(x, psi, q_syndrome, p_syndrome):
-    plt.plot(x, np.abs(psi)**2) # Shows the probability density
-    plt.axvline(q_syndrome, color='r', linestyle='--', label='q_syndrome')
-    plt.axvline(p_syndrome, color='g', linestyle='--', label='p_syndrome')
-    plt.xlabel('Position (q)')
-    plt.ylabel('Probability density')
-    plt.title('Syndrome Measurement')
-    plt.legend()
-    plt.show()
 
 def gkp_correct(psi, x, q_syndrome, p_syndrome):
     """
     Apply correction based on syndrome
     """
-    # Correct q shift
-    if q_syndrome > np.sqrt(np.pi)/2:
-        q_corr = q_syndrome - np.sqrt(np.pi)
-    else:
-        q_corr = q_syndrome
-    
-    # Correct p shift
-    if p_syndrome > np.sqrt(np.pi)/2:
-        p_corr = p_syndrome - np.sqrt(np.pi)
-    else:
-        p_corr = p_syndrome
-    
-    return apply_shift_error(psi, -q_corr, -p_corr, x)
+    psi_corr = apply_shift_error(psi, -q_syndrome, -p_syndrome, x)
+    dx = x[1] - x[0]
+    psi_corr /= np.sqrt(np.sum(np.abs(psi_corr)**2) * dx)  # Normalize
+    return psi_corr
+
+def plot_corrected_position(psi_corr, x):
+    plt.plot(x, np.abs(psi_corr)**2)
+    plt.title('After Correction (Position)')
+    plt.xlabel('q')
+    plt.ylabel('|ψ(q)|²')
+    plt.grid(True)
+    plt.show()
+
+def plot_corrected_momentum(psi_corr, x):
+    N = len(x)
+    dx = x[1] - x[0]
+    p = np.fft.fftshift(np.fft.fftfreq(N, d=dx)) * 2 * np.pi
+    psi_p = np.fft.fftshift(np.fft.fft(np.fft.fftshift(psi_corr))) * dx / np.sqrt(2*np.pi)
+    plt.plot(p, np.abs(psi_p)**2)
+    plt.title('After Correction (Momentum)')
+    plt.xlabel('p')
+    plt.ylabel('|ψ(p)|²')
+    plt.grid(True)
+    plt.show()
 
 
 
 # Step 4 - Animating the error correction process
 def gkp_correction_animation(psi, x, q_syndrome, p_syndrome, save_path="gkp_correction.gif"):
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))  # Correct usage of figsize
     
-    # Initialize plots
-    line_orig, = ax1.plot(x, np.abs(psi)**2, 'b-', label='Original')
-    psi_shifted = apply_shift_error(psi, q_syndrome, p_syndrome, x)
-    line_shifted, = ax1.plot(x, np.abs(psi_shifted)**2, 'r--', label='Shifted')
-    line_corrected, = ax1.plot(x, np.abs(psi)**2, 'g:', label='Corrected', linewidth=2)
+    dx = x[1] - x[0]
     
-    # Draw GKP grid
+    # Step 1: Apply known error
+    psi_err = apply_shift_error(psi, shift_q, shift_p, x)
+
+    # Step 2: Measure syndrome
+    q_syndrome, p_syndrome = gkp_syndrome_measurement(psi_err, x)
+
+    # Step 3: Compute correction
+    psi_corr_target = gkp_correct(psi_err, x, q_syndrome, p_syndrome)
+
+    # Fidelity at the end
+    # Removed unused variable final_fidelity
+
+    # Step 4: Set up plots
+    ax1.plot(x, np.abs(psi)**2, 'b-', label='Original')
+    ax1.plot(x, np.abs(psi_err)**2, 'r--', label='Errored')
+    line_corr, = ax1.plot(x, np.abs(psi_err)**2, 'g:', label='Correcting...', linewidth=2)
+
     for n in range(-4, 5):
-        ax1.axvline(n*np.sqrt(np.pi), color='gray', linestyle=':', alpha=0.3)
-    
-    ax1.set_xlim(x[0], x[-1])
-    ax1.set_ylim(0, 1.1*np.max(np.abs(psi)**2))
-    ax1.set_xlabel('Position (q)')
-    ax1.set_ylabel('Probability Density')
+        ax1.axvline(n*np.sqrt(np.pi), color='gray', linestyle=':', alpha=0.3)  # Correct usage of axvline and linestyle
+
+    ax1.set_xlim(x[0], x[-1])  # Correct usage of set_xlim
+    ax1.set_ylim(0, 1.1*np.max(np.abs(psi)**2))  # Correct usage of set_ylim
+    ax1.set_xlabel('Position (q)')  # Correct usage of set_xlabel
+    ax1.set_ylabel('Probability Density')  # Correct usage of set_ylabel
     ax1.legend()
-    
-    # Text annotations
-    text_syndrome = ax2.text(0.5, 0.7, "", fontsize=12, ha='center', transform=ax2.transAxes)
-    text_correction = ax2.text(0.5, 0.5, "", fontsize=12, ha='center', transform=ax2.transAxes)
+
+    # Text box
+    text_info = ax2.text(0.5, 0.6, "", fontsize=12, ha='center', transform=ax2.transAxes)  # Correct usage of fontsize
+    text_fidelity = ax2.text(0.5, 0.4, "", fontsize=12, ha='center', transform=ax2.transAxes)  # Correct usage of fontsize
     ax2.axis('off')
-    
-    # Calculate correction amounts
-    q_corr = q_syndrome - np.sqrt(np.pi) if q_syndrome > np.sqrt(np.pi)/2 else q_syndrome
-    p_corr = p_syndrome - np.sqrt(np.pi) if p_syndrome > np.sqrt(np.pi)/2 else p_syndrome
-    
+
+    # Correction values
+    q_corr = q_syndrome
+    p_corr = p_syndrome
+
     def update(frame):
-        alpha = min(1.0, frame/30)  # Normalized progress 0→1
-        
-        # Apply partial correction
-        psi_temp = apply_shift_error(psi_shifted, -alpha*q_corr, -alpha*p_corr, x)
-        line_corrected.set_ydata(np.abs(psi_temp)**2)
-        
-        # Update text
-        if frame < 15:
-            text_syndrome.set_text(f"Syndrome Measurement:\nΔq = {q_syndrome:.2f}\nΔp = {p_syndrome:.2f}")
-            text_correction.set_text("")
+        alpha = min(1.0, frame / 30)
+
+        # Apply interpolated correction
+        psi_step = apply_shift_error(psi_err, -alpha * q_corr, -alpha * p_corr, x)
+        line_corr.set_ydata(np.abs(psi_step)**2)  # Correct usage of set_ydata
+
+        text_info.set_text(
+            f"Syndrome:\nΔq = {q_syndrome:.3f}\nΔp = {p_syndrome:.3f}\nCorrection Step: {alpha:.2f}"
+        )
+
+        if alpha == 1.0:
+            curr_fidelity = compute_fidelity(psi, psi_step, dx)
+            text_fidelity.set_text(f"Fidelity: {curr_fidelity:.6f}")
         else:
-            text_syndrome.set_text(f"Measured Syndromes:\nΔq = {q_syndrome:.2f}\nΔp = {p_syndrome:.2f}")
-            text_correction.set_text(f"Applying Correction:\nΔq = {-q_corr:.2f}\nΔp = {-p_corr:.2f}")
-        
-        return line_corrected, text_syndrome, text_correction
-    
-    ani = FuncAnimation(fig, update, frames=60, interval=50, blit=True)
-    
-    # Save as GIF
+            text_fidelity.set_text("")
+
+        return line_corr, text_info, text_fidelity
+
+    ani = FuncAnimation(fig, update, frames=60, interval=50, blit=True)  # Correct usage of blit
     ani.save(save_path, writer='pillow', fps=20)
     plt.close()
     print(f"Animation saved to {save_path}")
@@ -172,20 +215,49 @@ def gkp_correction_animation(psi, x, q_syndrome, p_syndrome, save_path="gkp_corr
 def compute_fidelity(psi1, psi2, dx):
     return np.abs(np.sum(np.conj(psi1) * psi2) * dx)**2
 
+def fidelity_vs_shift_plot(psi, x, delta, shift_range=(-0.6, 0.6), steps=30):
+    """
+    Compute and plot fidelity vs. various shift errors.
+    """
+    dx = x[1] - x[0]
+    shift_vals = np.linspace(*shift_range, steps)
+    fidelity_map = np.zeros((steps, steps))
+
+    for i, dq in enumerate(shift_vals):
+        for j, dp in enumerate(shift_vals):
+            psi_err = apply_shift_error(psi, dq, dp, x)
+            q_syn, p_syn = gkp_syndrome_measurement(psi_err, x)
+            psi_corr = gkp_correct(psi_err, x, q_syn, p_syn)
+            fidelity_map[i, j] = compute_fidelity(psi, psi_corr, dx)
+
+    # Plot
+    plt.figure(figsize=(8, 6))
+    plt.imshow(fidelity_map, extent=(shift_range[0], shift_range[1], shift_range[0], shift_range[1]),
+               origin='lower', aspect='auto', cmap='viridis')
+    plt.colorbar(label='Fidelity')
+    plt.xlabel('Position shift Δq')
+    plt.ylabel('Momentum shift Δp')
+    plt.title('Fidelity vs Shift Errors')
+    plt.grid(False)
+    plt.show()
+
+
 
 
 # Step 6 - Main function to run the simulation
 # Parameters
-delta = 0.2  # Squeezing parameter
-shift_q, shift_p = 0.3, 0.4  # Random errors to apply
+delta = 0.2 # Squeezing parameter
+shift_q, shift_p = 0.1, 0.2  # Random errors to apply
 
 # Generate GKP state
 x, psi = gkp_state(delta)
-plot_gkp_wavefunction(x, psi)
+plot_initial_position(psi, x)
+plot_initial_momentum(psi, x)
 
 # Apply errors
 psi_err = apply_shift_error(psi, shift_q, shift_p, x)
-plot_gkp_wavefunction(x, psi_err)
+plot_error_position(psi_err, x)
+plot_error_momentum(psi_err, x)
 
 # Measure syndrome
 q_syn, p_syn = gkp_syndrome_measurement(psi_err, x)
@@ -193,15 +265,16 @@ print(f"Measured syndromes - q: {q_syn:.3f}, p: {p_syn:.3f}")
 
 # Correct errors
 psi_corr = gkp_correct(psi_err, x, q_syn, p_syn)
-plot_syndrome_wavefunction(x, psi, q_syn, p_syn)
+plot_corrected_position(psi_corr, x)
+plot_corrected_momentum(psi_corr, x)
 
 # Calculate fidelity
-psi_corr = gkp_correct(psi_err, x, q_syn, p_syn)
 fidelity = compute_fidelity(psi, psi_corr, x[1]-x[0])
 print(f"Fidelity after correction: {fidelity:.4f}")
 
 # Generate and display animation
 gkp_correction_animation(psi, x, q_syn, p_syn)
+fidelity_vs_shift_plot(psi, x, delta)
 
 # Print the original and shifted states: check if they match to know effectiveness of the code
 print(f"Applied shift_q: {shift_q}, Measured q_syndrome: {q_syn}")
