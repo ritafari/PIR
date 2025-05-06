@@ -294,3 +294,10 @@ we do ```q_syndrome = -np.sum(q_shifts * np.abs(psi)**2) * dx  # Note negative s
 => Fix the sign in ```apply_shift_error```
 instead of ```psi_shifted = psi * np.exp(1j * x * shift_p)```
 we do ```psi_shifted = psi * np.exp(-1j * x * shift_p)  # Negative sign for momentum```
+
+
+
+
+Eclaircire 
+Processeurs analogiques 
+

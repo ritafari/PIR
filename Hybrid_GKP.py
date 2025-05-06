@@ -234,7 +234,206 @@ def plot_hybrid_results(psi, x, psi_err, psi_corr, fig=None):
 
 
 
-# Step 7 - Main function to run the simulation
+# Step 7 - Threshold Implementation
+def compute_fidelity(psi1, psi2, dx):
+    """Compute fidelity between two states"""
+    overlap = np.abs(np.sum(np.conj(psi1) * psi2) * dx)
+    return np.abs(overlap)**2
+
+def find_hybrid_threshold(psi, x, delta, fidelity_threshold=0.99, max_shift=0.5, steps=100):
+    """
+    Find maximum correctable shift for hybrid GKP-qubit system.
+    Returns: (q_threshold, p_threshold, q_qubit_rate, p_qubit_rate)
+    """
+    dx = x[1] - x[0]
+    
+    # Initialize results
+    q_shifts = np.linspace(0, max_shift, steps)
+    q_fidelities = np.zeros_like(q_shifts)
+    q_qubit_used = np.zeros_like(q_shifts, dtype=bool)
+    
+    p_shifts = np.linspace(0, max_shift, steps)
+    p_fidelities = np.zeros_like(p_shifts)
+    p_qubit_used = np.zeros_like(p_shifts, dtype=bool)
+
+    # Test position shifts
+    for i, shift in enumerate(q_shifts):
+        psi_err = apply_shift_error(psi, shift, 0, x)
+        q_syn, p_syn = gkp_syndrome_measurement(psi_err, x)
+        
+        # Track if qubit correction was triggered
+        qubit_correction = (abs(q_syn) > np.sqrt(np.pi)/4)
+        q_qubit_used[i] = qubit_correction
+        
+        psi_corr = gkp_correct(psi_err, x, q_syn, p_syn, delta)
+        q_fidelities[i] = compute_fidelity(psi, psi_corr, dx)
+
+    # Test momentum shifts
+    for i, shift in enumerate(p_shifts):
+        psi_err = apply_shift_error(psi, 0, shift, x)
+        q_syn, p_syn = gkp_syndrome_measurement(psi_err, x)
+        
+        qubit_correction = (abs(p_syn) > np.sqrt(np.pi)/4)
+        p_qubit_used[i] = qubit_correction
+        
+        psi_corr = gkp_correct(psi_err, x, q_syn, p_syn, delta)
+        p_fidelities[i] = compute_fidelity(psi, psi_corr, dx)
+
+    # Calculate thresholds
+    q_threshold_idx = np.argmax(q_fidelities < fidelity_threshold)
+    if q_threshold_idx == 0 and q_fidelities[0] >= fidelity_threshold:
+        q_threshold = max_shift
+    else:
+        q_threshold = q_shifts[q_threshold_idx - 1] if q_threshold_idx > 0 else 0
+    
+    p_threshold_idx = np.argmax(p_fidelities < fidelity_threshold)
+    if p_threshold_idx == 0 and p_fidelities[0] >= fidelity_threshold:
+        p_threshold = max_shift
+    else:
+        p_threshold = p_shifts[p_threshold_idx - 1] if p_threshold_idx > 0 else 0
+    
+    # Calculate qubit intervention rates within correctable range
+    q_qubit_rate = np.mean(q_qubit_used[:q_threshold_idx]) if q_threshold_idx > 0 else 0
+    p_qubit_rate = np.mean(p_qubit_used[:p_threshold_idx]) if p_threshold_idx > 0 else 0
+    
+    return q_threshold, p_threshold, q_qubit_rate, p_qubit_rate
+
+def plot_hybrid_threshold_vs_delta(psi, x, delta_range=(0.1, 0.5), steps=20):
+    """
+    Plot threshold behavior and qubit correction rates vs delta
+    """
+    deltas = np.linspace(*delta_range, steps)
+    q_thresholds = np.zeros_like(deltas)
+    p_thresholds = np.zeros_like(deltas)
+    q_qubit_rates = np.zeros_like(deltas)
+    p_qubit_rates = np.zeros_like(deltas)
+
+    for i, delta in enumerate(deltas):
+        q_thresh, p_thresh, q_rate, p_rate = find_hybrid_threshold(psi, x, delta)
+        q_thresholds[i] = q_thresh
+        p_thresholds[i] = p_thresh
+        q_qubit_rates[i] = q_rate
+        p_qubit_rates[i] = p_rate
+    
+    # Create figure with two y-axes
+    fig, ax1 = plt.subplots(figsize=(10, 6))
+    
+    # Plot thresholds on primary axis
+    ax1.plot(deltas, q_thresholds, 'b-', label='Position shift threshold')
+    ax1.plot(deltas, p_thresholds, 'r-', label='Momentum shift threshold')
+    ax1.set_xlabel('Delta (squeezing parameter)')
+    ax1.set_ylabel('Maximum correctable shift')
+    ax1.grid(True)
+    
+    # Plot qubit rates on secondary axis
+    ax2 = ax1.twinx()
+    ax2.plot(deltas, q_qubit_rates, 'b--', label='Qubit X correction rate')
+    ax2.plot(deltas, p_qubit_rates, 'r--', label='Qubit Z correction rate')
+    ax2.set_ylabel('Qubit correction rate', rotation=270, labelpad=15)
+    ax2.set_ylim(0, 1)
+    
+    # Combine legends
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
+    
+    plt.title('Hybrid GKP-Qubit Correction Thresholds')
+    plt.tight_layout()
+    return fig
+
+
+
+# Step 8 - Perrformance Analysis
+def performance_analysis(psi, x, delta, num_trials=1000):
+    """
+    Analyze average correction performance with random shifts within threshold limits.
+    Returns: (avg_fidelity, avg_qubit_usage)
+    """
+    # First determine the maximum correctable shifts
+    q_thresh, p_thresh, _, _ = find_hybrid_threshold(psi, x, delta)
+    
+    # Initialize statistics
+    fidelities = []
+    qubit_usages = []
+    dx = x[1] - x[0]
+    
+    for _ in range(num_trials):
+        # Generate random shifts within threshold bounds
+        shift_q = np.random.uniform(-q_thresh, q_thresh)
+        shift_p = np.random.uniform(-p_thresh, p_thresh)
+        
+        # Apply error and correct
+        psi_err = apply_shift_error(psi, shift_q, shift_p, x)
+        q_syn, p_syn = gkp_syndrome_measurement(psi_err, x)
+        psi_corr = gkp_correct(psi_err, x, q_syn, p_syn, delta)
+        
+        # Track fidelity
+        fidelity = compute_fidelity(psi, psi_corr, dx)
+        fidelities.append(fidelity)
+        
+        # Track if qubit correction was used
+        qubit_used = (abs(q_syn) > np.sqrt(np.pi)/4) or (abs(p_syn) > np.sqrt(np.pi)/4)
+        qubit_usages.append(qubit_used)
+    
+    # Calculate statistics
+    avg_fidelity = np.mean(fidelities)
+    avg_qubit_usage = np.mean(qubit_usages)
+    
+    return avg_fidelity, avg_qubit_usage, q_thresh, p_thresh
+
+def plot_performance_vs_delta(psi, x, delta_range=(0.1, 0.5), steps=10, num_trials=500):
+    """
+    Plot average performance metrics vs delta parameter
+    """
+    deltas = np.linspace(*delta_range, steps)
+    avg_fidelities = []
+    qubit_rates = []
+    thresholds_q = []
+    thresholds_p = []
+    
+    for delta in deltas:
+        print(f"Analyzing delta={delta:.2f}...")
+        fid, qubit_rate, q_thresh, p_thresh = performance_analysis(psi, x, delta, num_trials)
+        avg_fidelities.append(fid)
+        qubit_rates.append(qubit_rate)
+        thresholds_q.append(q_thresh)
+        thresholds_p.append(p_thresh)
+    
+    # Create figure with two subplots
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10))
+    
+    # Plot fidelity and thresholds
+    ax1.plot(deltas, avg_fidelities, 'b-o', label='Average Fidelity')
+    ax1.set_xlabel('Delta (squeezing parameter)')
+    ax1.set_ylabel('Fidelity', color='b')
+    ax1.tick_params(axis='y', labelcolor='b')
+    ax1.grid(True)
+    
+    ax1b = ax1.twinx()
+    ax1b.plot(deltas, thresholds_q, 'r--', label='Position Threshold')
+    ax1b.plot(deltas, thresholds_p, 'g--', label='Momentum Threshold')
+    ax1b.set_ylabel('Threshold Shift', color='r')
+    ax1b.tick_params(axis='y', labelcolor='r')
+    
+    # Plot qubit usage rates
+    ax2.plot(deltas, qubit_rates, 'm-s')
+    ax2.set_xlabel('Delta (squeezing parameter)')
+    ax2.set_ylabel('Qubit Correction Rate', color='m')
+    ax2.tick_params(axis='y', labelcolor='m')
+    ax2.grid(True)
+    
+    # Add legends
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines1b, labels1b = ax1b.get_legend_handles_labels()
+    ax1.legend(lines1 + lines1b, labels1 + labels1b, loc='upper right')
+    
+    plt.suptitle('Hybrid GKP Performance Analysis')
+    plt.tight_layout()
+    return fig
+
+
+
+# Step 9 - Main function to run the simulation
 def main():
     # Parameters
     delta = 0.2 # Squeezing parameter
@@ -273,13 +472,34 @@ def main():
     
     # Calculate and display fidelity
     dx = x[1] - x[0]
-    fidelity = np.abs(np.sum(psi.conj() * psi_corr) * dx)**2
+    fidelity = compute_fidelity(psi, psi_corr, dx)
     print(f"Fidelity after correction: {fidelity:.4f}")
 
-    # Print the original and shifted states: check if they match to know effectiveness of the code
+    # Print the original and shifted states
     print(f"Applied shift_q: {shift_q}, Measured q_syndrome: {q_syn}")
     print(f"Applied shift_p: {shift_p}, Measured p_syndrome: {p_syn}")
 
+    # Run threshold analysis
+    print("\nRunning threshold analysis...")
+    q_thresh, p_thresh, q_rate, p_rate = find_hybrid_threshold(psi, x, delta)
+    print(f"\nFor delta = {delta}:")
+    print(f"Max correctable position shift: {q_thresh:.4f} (qubit X rate: {q_rate:.1%})")
+    print(f"Max correctable momentum shift: {p_thresh:.4f} (qubit Z rate: {p_rate:.1%})")
+    
+    # Plot threshold vs delta
+    fig8 = plot_hybrid_threshold_vs_delta(psi, x)
+
+    # Run performance analysis
+    print("\nRunning performance analysis...")
+    avg_fidelity, qubit_rate, q_thresh, p_thresh = performance_analysis(psi, x, delta)
+    print(f"\nPerformance for delta={delta}:")
+    print(f"Average fidelity: {avg_fidelity:.4f}")
+    print(f"Qubit correction rate: {qubit_rate:.1%}")
+    print(f"Max correctable shifts: q={q_thresh:.3f}, p={p_thresh:.3f}")
+    
+    # Plot performance vs delta
+    fig9 = plot_performance_vs_delta(psi, x)
+    
     # Show all plots at once
     plt.show()
 

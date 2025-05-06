@@ -314,8 +314,167 @@ def fidelity_vs_shift_plot(psi, x, delta, shift_range=(-0.6, 0.6), steps=30):
 
 
 
+# Step 6.5 - Plotting the threshold for maximum correctable shift
+# Threshold for max correctable shift
+def find_threshold(psi, x, delta, fidelity_threshold=0.99, max_shift=0.5, steps=100):
+    """
+    Find the maximum correctable shift for a given GKP state.
+    
+    Parameters:
+    - psi: The GKP state wavefunction (from gkp_state())
+    - x: The position space array
+    - delta: squeezing parameter (used for correction)
+    - fidelity_threshold: fidelity value below which we consider correction unsuccessful
+    - max_shift: maximum shift to test (will search from 0 to this value)
+    - steps: number of steps in the search
+    
+    Returns:
+    - q_threshold: maximum correctable position shift
+    - p_threshold: maximum correctable momentum shift
+    """
+    dx = x[1] - x[0]
+    
+    # Test position shifts
+    q_shifts = np.linspace(0, max_shift, steps)
+    q_fidelities = np.zeros_like(q_shifts)
+    
+    for i, shift in enumerate(q_shifts):
+        psi_err = apply_shift_error(psi, shift, 0, x)  # Only position shift
+        q_syn, p_syn = gkp_syndrome_measurement(psi_err, x)
+        psi_corr = gkp_correct(psi_err, x, q_syn, p_syn, delta)
+        q_fidelities[i] = compute_fidelity(psi, psi_corr, dx)
+    
+    # Find where fidelity drops below threshold
+    q_threshold_idx = np.argmax(q_fidelities < fidelity_threshold)   # finds the first index where fidelity drops below our threshold( 0 if 1st elem < threshold; len(q_fidelities) if all fidelities > threshold)
+    
+    # Special Case: ALL tested shifts (up to max_shift) have fidelity ≥ threshold
+    if q_threshold_idx == 0 and q_fidelities[0] >= fidelity_threshold:
+        q_threshold = max_shift  # All tested shifts are below threshold
+    
+    # Normal Case
+    else:
+        q_threshold = q_shifts[q_threshold_idx - 1] if q_threshold_idx > 0 else 0
+        # If we found a drop point (q_threshold_idx > 0), we take the shift just before the dro
+        # otherwise means even the smallest shift failed, so threshold is 0
+    
+    # Test momentum shifts
+    p_shifts = np.linspace(0, max_shift, steps)
+    p_fidelities = np.zeros_like(p_shifts)
+    
+    for i, shift in enumerate(p_shifts):
+        psi_err = apply_shift_error(psi, 0, shift, x)  # Only momentum shift
+        q_syn, p_syn = gkp_syndrome_measurement(psi_err, x)
+        psi_corr = gkp_correct(psi_err, x, q_syn, p_syn, delta)
+        p_fidelities[i] = compute_fidelity(psi, psi_corr, dx)
+    
+    # Find where fidelity drops below threshold
+    p_threshold_idx = np.argmax(p_fidelities < fidelity_threshold)
+    if p_threshold_idx == 0 and p_fidelities[0] >= fidelity_threshold:
+        p_threshold = max_shift  # All tested shifts are below threshold
+    else:
+        p_threshold = p_shifts[p_threshold_idx - 1] if p_threshold_idx > 0 else 0
+    
+    return q_threshold, p_threshold
 
-# Step 7 - Main function to run the simulation
+def plot_threshold_vs_delta(psi, x, delta_range=(0.1, 0.5), steps=20):
+    """
+    Plot the threshold shift vs delta parameter using the same GKP state.
+    """
+    deltas = np.linspace(*delta_range, steps)
+    q_thresholds = np.zeros_like(deltas)
+    p_thresholds = np.zeros_like(deltas)
+    
+    for i, delta in enumerate(deltas):
+        q_thresh, p_thresh = find_threshold(psi, x, delta)
+        q_thresholds[i] = q_thresh
+        p_thresholds[i] = p_thresh
+    
+    plt.figure(figsize=(10, 6))
+    plt.plot(deltas, q_thresholds, 'b-', label='Position shift threshold')  # How much shift in position can be corrected.
+    plt.plot(deltas, p_thresholds, 'r-', label='Momentum shift threshold')  # How much shift in momentum can be corrected.
+    plt.xlabel('Delta (squeezing parameter)')   # X-axis: Delta (squeezing parameter, typically ranging from ~0.1 to 0.5)
+    plt.ylabel('Maximum correctable shift')     # Y-axis: Maximum correctable shift (threshold)
+    plt.title('Error correction threshold vs. delta')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+
+
+# Step 7 - Performance Analysis
+def performance_analysis(psi, x, delta, num_trials=1000):
+    """
+    Analyze average correction performance with random shifts within threshold limits.
+    Returns: (avg_fidelity, q_threshold, p_threshold)
+    """
+    # First determine the maximum correctable shifts
+    q_thresh, p_thresh = find_threshold(psi, x, delta)
+    
+    # Initialize statistics
+    fidelities = []
+    dx = x[1] - x[0]
+    
+    for _ in range(num_trials):
+        # Generate random shifts within threshold bounds
+        shift_q = np.random.uniform(-q_thresh, q_thresh)
+        shift_p = np.random.uniform(-p_thresh, p_thresh)
+        
+        # Apply error and correct
+        psi_err = apply_shift_error(psi, shift_q, shift_p, x)
+        q_syn, p_syn = gkp_syndrome_measurement(psi_err, x)
+        psi_corr = gkp_correct(psi_err, x, q_syn, p_syn, delta)
+        
+        # Track fidelity
+        fidelity = compute_fidelity(psi, psi_corr, dx)
+        fidelities.append(fidelity)
+    
+    # Calculate average fidelity
+    avg_fidelity = np.mean(fidelities)
+    
+    return avg_fidelity, q_thresh, p_thresh
+
+def plot_performance_vs_delta(psi, x, delta_range=(0.1, 0.5), steps=10, num_trials=500):
+    """
+    Plot average performance metrics vs delta parameter
+    """
+    deltas = np.linspace(*delta_range, steps)
+    avg_fidelities = []
+    thresholds_q = []
+    thresholds_p = []
+    
+    for delta in deltas:
+        print(f"Analyzing delta={delta:.2f}...")
+        fid, q_thresh, p_thresh = performance_analysis(psi, x, delta, num_trials)
+        avg_fidelities.append(fid)
+        thresholds_q.append(q_thresh)
+        thresholds_p.append(p_thresh)
+    
+    # Create figure with two subplots
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10))
+    
+    # Plot fidelity
+    ax1.plot(deltas, avg_fidelities, 'b-o')
+    ax1.set_xlabel('Delta (squeezing parameter)')
+    ax1.set_ylabel('Average Fidelity', color='b')
+    ax1.tick_params(axis='y', labelcolor='b')
+    ax1.grid(True)
+    ax1.set_title('Average Fidelity vs Delta')
+    
+    # Plot thresholds
+    ax2.plot(deltas, thresholds_q, 'r-', label='Position Threshold')
+    ax2.plot(deltas, thresholds_p, 'g-', label='Momentum Threshold')
+    ax2.set_xlabel('Delta (squeezing parameter)')
+    ax2.set_ylabel('Threshold Shift')
+    ax2.legend()
+    ax2.grid(True)
+    ax2.set_title('Correctable Shift Thresholds vs Delta')
+    
+    plt.tight_layout()
+    return fig
+
+
+
+# Step 8 - Main function to run the simulation
 def main():
     # Parameters
     delta = 0.2 # Squeezing parameter
@@ -360,6 +519,25 @@ def main():
     # Print the original and shifted states: check if they match to know effectiveness of the code
     print(f"Applied shift_q: {shift_q}, Measured q_syndrome: {q_syn}")
     print(f"Applied shift_p: {shift_p}, Measured p_syndrome: {p_syn}")
+
+    # Find and print threshold for current delta
+    q_thresh, p_thresh = find_threshold(psi, x, delta)
+    print(f"\nFor delta = {delta}:")
+    print(f"Maximum correctable position shift: {q_thresh:.4f}")
+    print(f"Maximum correctable momentum shift: {p_thresh:.4f}")
+    
+    # Plot threshold vs delta using the same psi
+    plot_threshold_vs_delta(psi, x)
+
+    # Run performance analysis
+    print("\nRunning performance analysis...")
+    avg_fidelity, q_thresh, p_thresh = performance_analysis(psi, x, delta)
+    print(f"\nPerformance for delta={delta}:")
+    print(f"Average fidelity: {avg_fidelity:.4f}")
+    print(f"Max correctable shifts: q={q_thresh:.3f}, p={p_thresh:.3f}")
+    
+    # Plot performance vs delta
+    fig7 = plot_performance_vs_delta(psi, x)
 
     # Show all plots at once
     plt.show()
