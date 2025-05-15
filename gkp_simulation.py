@@ -137,42 +137,45 @@ def test_shift_measurement(delta, test_shifts=[0.1, 0.3, 0.5]):
 # Step 4 - Simulating the GKP error correction
 def gkp_syndrome_measurement(psi, x):
     """
-    Measure the syndrome (shift from lattice)
+    FIXED syndrome measurement with proper momentum calculation
     """
     dx = x[1] - x[0]
     N = len(x)
 
-    # POSITION (q) measurement
-    # Calculate the fractional part of position relative to √π lattice
+    # Position measurement (unchanged)
     q_shifts = (x + np.sqrt(np.pi)/2) % np.sqrt(np.pi) - np.sqrt(np.pi)/2
-    q_syndrome = -np.sum(q_shifts * np.abs(psi)**2) * dx  # Note negative sign (otherwise it would be a shift in the opposite direction)
+    q_syndrome = -np.sum(q_shifts * np.abs(psi)**2) * dx
     
-    # MOMENTUM (p) measurement - improved precision
+    # FIXED Momentum measurement
     psi_p = np.fft.fftshift(np.fft.fft(np.fft.fftshift(psi))) * dx / np.sqrt(2*np.pi)
     p = np.fft.fftshift(np.fft.fftfreq(N, d=dx)) * 2 * np.pi
-    dp = p[1] - p[0]
     
-    # Use complex phase for more accurate momentum measurement
-    theta_p = np.angle(np.sum(psi_p * np.exp(-1j*p*np.sqrt(np.pi)/2)) * dp)
-    p_syndrome = (theta_p + np.pi) % (2*np.pi) - np.pi  # Wrapped to [-π, π]
-    p_syndrome *= np.sqrt(np.pi)/np.pi  # Scale to GKP lattice
+    # Measure at p=√π (not √π/2)
+    theta_p = np.angle(np.sum(psi_p * np.exp(-1j*p*np.sqrt(np.pi))))
+    p_syndrome = (theta_p + np.pi) % (2*np.pi) - np.pi  # Wrap to [-π, π]
+    p_syndrome /= np.sqrt(np.pi)  # Proper scaling
     
     return q_syndrome, p_syndrome
+
+def validate_syndrome(q_syn, p_syn, psi, x, delta):
+    """Advanced version that considers actual correctable range"""
+    q_thresh, p_thresh = find_threshold(psi, x, delta)
+    return abs(q_syn) < q_thresh and abs(p_syn) < p_thresh
 
 def gkp_correct(psi, x, q_syndrome, p_syndrome, delta):
     """
     Apply correction based on syndrome
     """
     # Apply correction with proper boundary conditions
-    psi_corr = apply_shift_error(psi, -q_syndrome, -p_syndrome, x)
-    
-    # Additional stabilization step - project to nearest logical state
     dx = x[1] - x[0]
-    q_shifts = np.mod(x + np.sqrt(np.pi)/2, np.sqrt(np.pi)) - np.sqrt(np.pi)/2
-    psi_corr *= np.exp(-q_shifts**2 / (2*delta**2))  # Soft projection
+    psi_corr = apply_shift_error(psi, -q_syndrome, -p_syndrome, x)
+    q_shifts = (x + np.sqrt(np.pi)/2) % np.sqrt(np.pi) - np.sqrt(np.pi)/2
+    psi_corr *= np.exp(-q_shifts**2 / (2 * delta**2))
     
-    # Normalize
-    psi_corr /= np.sqrt(np.sum(np.abs(psi_corr)**2) * dx)
+    # Soft normalization to prevent amplitude explosion
+    norm = np.sqrt(np.sum(np.abs(psi_corr)**2 * dx))
+    psi_corr /= norm if norm > 0 else 1.0  # Avoid division by zero
+    
     return psi_corr
 
 def plot_corrected_position(psi_corr, x, fig=None):
@@ -318,85 +321,92 @@ def fidelity_vs_shift_plot(psi, x, delta, shift_range=(-0.6, 0.6), steps=30):
 # Threshold for max correctable shift
 def find_threshold(psi, x, delta, fidelity_threshold=0.99, max_shift=0.5, steps=100):
     """
-    Find the maximum correctable shift for a given GKP state.
-    
-    Parameters:
-    - psi: The GKP state wavefunction (from gkp_state())
-    - x: The position space array
-    - delta: squeezing parameter (used for correction)
-    - fidelity_threshold: fidelity value below which we consider correction unsuccessful
-    - max_shift: maximum shift to test (will search from 0 to this value)
-    - steps: number of steps in the search
-    
-    Returns:
-    - q_threshold: maximum correctable position shift
-    - p_threshold: maximum correctable momentum shift
+    FIXED threshold finding with proper index handling
     """
     dx = x[1] - x[0]
     
-    # Test position shifts
-    q_shifts = np.linspace(0, max_shift, steps)
-    q_fidelities = np.zeros_like(q_shifts)
+    def test_shift(shift_type):
+        shifts = np.linspace(0, max_shift, steps)
+        for shift in shifts:
+            psi_err = apply_shift_error(
+                psi, 
+                shift if shift_type == 'q' else 0,
+                0 if shift_type == 'q' else shift,
+                x
+            )
+            q_syn, p_syn = gkp_syndrome_measurement(psi_err, x)
+            psi_corr = gkp_correct(psi_err, x, q_syn, p_syn, delta)
+            fid = compute_fidelity(psi, psi_corr, dx)
+            
+            if fid < fidelity_threshold:
+                # Return previous shift (or 0 if first fails)
+                idx = np.where(shifts == shift)[0][0]
+                return shifts[idx-1] if idx > 0 else 0.0
+        return max_shift  # All shifts passed
     
-    for i, shift in enumerate(q_shifts):
-        psi_err = apply_shift_error(psi, shift, 0, x)  # Only position shift
-        q_syn, p_syn = gkp_syndrome_measurement(psi_err, x)
-        psi_corr = gkp_correct(psi_err, x, q_syn, p_syn, delta)
-        q_fidelities[i] = compute_fidelity(psi, psi_corr, dx)
-    
-    # Find where fidelity drops below threshold
-    q_threshold_idx = np.argmax(q_fidelities < fidelity_threshold)   # finds the first index where fidelity drops below our threshold( 0 if 1st elem < threshold; len(q_fidelities) if all fidelities > threshold)
-    
-    # Special Case: ALL tested shifts (up to max_shift) have fidelity ≥ threshold
-    if q_threshold_idx == 0 and q_fidelities[0] >= fidelity_threshold:
-        q_threshold = max_shift  # All tested shifts are below threshold
-    
-    # Normal Case
-    else:
-        q_threshold = q_shifts[q_threshold_idx - 1] if q_threshold_idx > 0 else 0
-        # If we found a drop point (q_threshold_idx > 0), we take the shift just before the dro
-        # otherwise means even the smallest shift failed, so threshold is 0
-    
-    # Test momentum shifts
-    p_shifts = np.linspace(0, max_shift, steps)
-    p_fidelities = np.zeros_like(p_shifts)
-    
-    for i, shift in enumerate(p_shifts):
-        psi_err = apply_shift_error(psi, 0, shift, x)  # Only momentum shift
-        q_syn, p_syn = gkp_syndrome_measurement(psi_err, x)
-        psi_corr = gkp_correct(psi_err, x, q_syn, p_syn, delta)
-        p_fidelities[i] = compute_fidelity(psi, psi_corr, dx)
-    
-    # Find where fidelity drops below threshold
-    p_threshold_idx = np.argmax(p_fidelities < fidelity_threshold)
-    if p_threshold_idx == 0 and p_fidelities[0] >= fidelity_threshold:
-        p_threshold = max_shift  # All tested shifts are below threshold
-    else:
-        p_threshold = p_shifts[p_threshold_idx - 1] if p_threshold_idx > 0 else 0
-    
-    return q_threshold, p_threshold
+    q_thresh = test_shift('q')
+    p_thresh = test_shift('p')
+    return q_thresh, p_thresh
 
-def plot_threshold_vs_delta(psi, x, delta_range=(0.1, 0.5), steps=20):
+def plot_threshold_vs_delta(psi, x, delta_range=(0.1, 0.5), steps=20, max_shift=0.5):
     """
     Plot the threshold shift vs delta parameter using the same GKP state.
+    
+    Parameters:
+    - psi: Initial GKP state wavefunction
+    - x: Position space array
+    - delta_range: Range of delta values to test (min, max)
+    - steps: Number of delta values to test
+    - max_shift: Maximum shift to test for threshold finding
     """
     deltas = np.linspace(*delta_range, steps)
     q_thresholds = np.zeros_like(deltas)
     p_thresholds = np.zeros_like(deltas)
     
+    print("Calculating thresholds...")
+    print(f"{'Delta':<8} {'Q Threshold':<12} {'P Threshold':<12}")
+    print("-"*35)
+    
     for i, delta in enumerate(deltas):
-        q_thresh, p_thresh = find_threshold(psi, x, delta)
+        # Generate fresh GKP state for each delta to ensure consistency
+        _, psi_current = gkp_state(delta)
+        
+        q_thresh, p_thresh = find_threshold(psi_current, x, delta, max_shift=max_shift)
         q_thresholds[i] = q_thresh
         p_thresholds[i] = p_thresh
+        
+        print(f"{delta:.4f}   {q_thresh:.6f}    {p_thresh:.6f}")
     
+    # Plotting
     plt.figure(figsize=(10, 6))
-    plt.plot(deltas, q_thresholds, 'b-', label='Position shift threshold')  # How much shift in position can be corrected.
-    plt.plot(deltas, p_thresholds, 'r-', label='Momentum shift threshold')  # How much shift in momentum can be corrected.
-    plt.xlabel('Delta (squeezing parameter)')   # X-axis: Delta (squeezing parameter, typically ranging from ~0.1 to 0.5)
-    plt.ylabel('Maximum correctable shift')     # Y-axis: Maximum correctable shift (threshold)
-    plt.title('Error correction threshold vs. delta')
+    
+    # Theoretical maximum (0.5√π ≈ 0.886)
+    theoretical_max = 0.5 * np.sqrt(np.pi)
+    plt.axhline(y=theoretical_max, color='gray', linestyle='--', 
+                label='Theoretical max (0.5√π)')
+    
+    # Actual thresholds
+    plt.plot(deltas, q_thresholds, 'b-o', label='Position shift threshold', markersize=5)
+    plt.plot(deltas, p_thresholds, 'r-s', label='Momentum shift threshold', markersize=5)
+    
+    plt.xlabel('Delta (squeezing parameter)')
+    plt.ylabel('Maximum correctable shift')
+    plt.title('Error Correction Threshold vs. Delta\n(Testing shifts up to {:.2f})'.format(max_shift))
+    
+    # Adjust y-axis to show interesting range
+    y_max = min(1.1 * theoretical_max, 1.1 * max(max(q_thresholds), max(p_thresholds)))
+    plt.ylim(0, y_max)
+    
     plt.legend()
-    plt.grid(True)
+    plt.grid(True, alpha=0.3)
+    
+    # Add text annotation if thresholds are zero
+    if np.all(q_thresholds == 0) or np.all(p_thresholds == 0):
+        plt.text(0.5, 0.5, 'WARNING: All thresholds zero\nCheck syndrome measurement!',
+                 ha='center', va='center', transform=plt.gca().transAxes,
+                 bbox=dict(facecolor='red', alpha=0.2))
+    
+    plt.tight_layout()
     plt.show()
 
 
@@ -477,7 +487,7 @@ def plot_performance_vs_delta(psi, x, delta_range=(0.1, 0.5), steps=10, num_tria
 # Step 8 - Main function to run the simulation
 def main():
     # Parameters
-    delta = 0.2 # Squeezing parameter
+    delta = 0.2  # Squeezing parameter
     shift_q, shift_p = 0.1, 0.2  # Random errors to apply
 
     # Setup all figures first
@@ -497,28 +507,64 @@ def main():
     plot_error_momentum(psi_err, x, fig4)
     test_shift_measurement(delta, test_shifts=[0.1, 0.3, 0.5])
 
+    # Correct errors with ADAPTIVE DELTA and VALIDATION
+    print("\n--- Correction Process ---")
+
     # Measure syndrome
-    q_syn, p_syn = gkp_syndrome_measurement(psi_err, x)
-    print(f"Measured syndromes - q: {q_syn:.3f}, p: {p_syn:.3f}")
+    q_syn1, p_syn1 = gkp_syndrome_measurement(psi_err, x)
+    print(f"Measured syndromes - q: {q_syn1:.3f}, p: {p_syn1:.3f}")
 
     # Correct errors
-    psi_corr = gkp_correct(psi_err, x, q_syn, p_syn, delta)
+    # Applyinig the three correctors one after the other to better fidelity
+    psi_corr1 = gkp_correct(psi_err, x, q_syn1, p_syn1, delta) #1st correction
+    q_syn2, p_syn2 = gkp_syndrome_measurement(psi_corr1, x)
+    print(f"Measured syndromes - q: {q_syn2:.3f}, p: {p_syn2:.3f}")
+     # 2nd correction (medium) - only if syndromes are valid
+    if validate_syndrome(q_syn2, p_syn2, psi_corr1, x, delta):
+        psi_corr2 = gkp_correct(psi_corr1, x, q_syn2, p_syn2, delta=0.1)
+        q_syn3, p_syn3 = gkp_syndrome_measurement(psi_corr2, x)
+        print(f"After 2nd correction: syndromes q={q_syn3:.3f}, p={p_syn3:.3f}")
+    else:
+        print("Skipping 2nd correction - invalid syndromes")
+        psi_corr2 = psi_corr1
+        q_syn3, p_syn3 = q_syn2, p_syn2
+    
+    # 3rd correction (fine) - only if syndromes are valid
+    if validate_syndrome(q_syn3, p_syn3, psi_corr2, x, delta):
+        psi_corr3 = gkp_correct(psi_corr2, x, q_syn3, p_syn3, delta=0.05)
+    else:
+        print("Skipping 3rd correction - invalid syndromes")
+        psi_corr3 = psi_corr2
 
     # Plot corrected states
-    plot_corrected_position(psi_corr, x, fig5)
-    plot_corrected_momentum(psi_corr, x, fig6)
+    plot_corrected_position(psi_corr1, x, fig5) # 1st correction
+    plot_corrected_momentum(psi_corr1, x, fig6)
+    plot_corrected_position(psi_corr2, x, fig5) # 2nd correction
+    plot_corrected_momentum(psi_corr2, x, fig6)
+    plot_corrected_position(psi_corr3, x, fig5) # 3rd correction
+    plot_corrected_momentum(psi_corr3, x, fig6)
 
     # Calculate fidelity
-    fidelity = compute_fidelity(psi, psi_corr, x[1]-x[0])
+    fidelity = compute_fidelity(psi, psi_corr1, x[1]-x[0]) # Fidelity after 1st correction
     print(f"Fidelity after correction: {fidelity:.4f}")
+    F = compute_fidelity(psi, psi_corr2, x[1]-x[0]) # Fidelity after 2nd correction
+    print(f"Fidelity after 2nd correction: {F:.4f}")
+    F1 = compute_fidelity(psi, psi_corr3, x[1]-x[0]) # Fidelity after 3rd correction
+    print(f"Fidelity after 3rd correction: {F1:.4f}")
 
     # Generate and display animation
-    gkp_correction_animation(psi, x, q_syn, p_syn, shift_q, shift_p, delta)
+    gkp_correction_animation(psi, x, q_syn1, p_syn1, shift_q, shift_p, delta)
     fidelity_vs_shift_plot(psi, x, delta)
 
     # Print the original and shifted states: check if they match to know effectiveness of the code
-    print(f"Applied shift_q: {shift_q}, Measured q_syndrome: {q_syn}")
-    print(f"Applied shift_p: {shift_p}, Measured p_syndrome: {p_syn}")
+    print(f"Applied shift_q: {shift_q}, Measured q_syndrome: {q_syn1}")
+    print(f"Applied shift_p: {shift_p}, Measured p_syndrome: {p_syn1}")
+
+    # Are the Syndromes Being Updated Correctly
+    print(f"1st correction syndromes: q={q_syn1:.3f}, p={p_syn1:.3f}")
+    print(f"2nd correction syndromes: q={q_syn2:.3f}, p={p_syn2:.3f}") 
+    print(f"3rd correction syndromes: q={q_syn3:.3f}, p={p_syn3:.3f}")
+
 
     # Find and print threshold for current delta
     q_thresh, p_thresh = find_threshold(psi, x, delta)
@@ -527,7 +573,7 @@ def main():
     print(f"Maximum correctable momentum shift: {p_thresh:.4f}")
     
     # Plot threshold vs delta using the same psi
-    plot_threshold_vs_delta(psi, x)
+    plot_threshold_vs_delta(psi, x, delta_range=(0.1, 0.5), steps=20, max_shift=0.5)
 
     # Run performance analysis
     print("\nRunning performance analysis...")
