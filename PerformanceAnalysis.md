@@ -401,6 +401,9 @@ For each delta value, the average fidelity when correcting random errors
 The maximum correctable shift sizes
 How these metrics vary with the squeezing parameter delta
 
+DELTA AND FIDELITY INCREASE TOGETHER ON POT:
+for a fixed range of correctable shifts, larger delta (broader peaks) leads to higher fidelity because the state is more resilient to small errors. The trade-off is that the correctable threshold shrinks. This is a known property of GKP codes: finite squeezing improves robustness to small errors at the cost of reduced tolerance for large errors.
+
 
 ### Code implementation Idea for gkp_simulation.py - using max_shift determined by thresholds function!!
 

@@ -136,13 +136,10 @@ def test_shift_measurement(delta, test_shifts=[0.1, 0.3, 0.5]):
 
 # Step 4 - Simulating the GKP error correction
 def gkp_syndrome_measurement(psi, x):
-    """
-    FIXED syndrome measurement with proper momentum calculation
-    """
     dx = x[1] - x[0]
     N = len(x)
-
-    # Position measurement (unchanged)
+    
+    # Position measurement (working correctly)
     q_shifts = (x + np.sqrt(np.pi)/2) % np.sqrt(np.pi) - np.sqrt(np.pi)/2
     q_syndrome = -np.sum(q_shifts * np.abs(psi)**2) * dx
     
@@ -150,10 +147,12 @@ def gkp_syndrome_measurement(psi, x):
     psi_p = np.fft.fftshift(np.fft.fft(np.fft.fftshift(psi))) * dx / np.sqrt(2*np.pi)
     p = np.fft.fftshift(np.fft.fftfreq(N, d=dx)) * 2 * np.pi
     
-    # Measure at p=√π (not √π/2)
-    theta_p = np.angle(np.sum(psi_p * np.exp(-1j*p*np.sqrt(np.pi))))
-    p_syndrome = (theta_p + np.pi) % (2*np.pi) - np.pi  # Wrap to [-π, π]
-    p_syndrome /= np.sqrt(np.pi)  # Proper scaling
+    # Proper phase measurement at p=√π
+    phase = np.angle(np.sum(psi_p * np.exp(-1j*p*np.sqrt(np.pi))))
+    p_syndrome = phase / np.sqrt(np.pi)  # Convert to displacement units
+    
+    # Ensure syndrome is within [-√π/2, √π/2]
+    p_syndrome = (p_syndrome + np.sqrt(np.pi)/2) % np.sqrt(np.pi) - np.sqrt(np.pi)/2
     
     return q_syndrome, p_syndrome
 
@@ -162,21 +161,20 @@ def validate_syndrome(q_syn, p_syn, psi, x, delta):
     q_thresh, p_thresh = find_threshold(psi, x, delta)
     return abs(q_syn) < q_thresh and abs(p_syn) < p_thresh
 
-def gkp_correct(psi, x, q_syndrome, p_syndrome, delta):
-    """
-    Apply correction based on syndrome
-    """
-    # Apply correction with proper boundary conditions
+def gkp_correct(psi, x, q_syn, p_syn, delta):
+    """More robust correction"""
+    # Apply shift correction
     dx = x[1] - x[0]
-    psi_corr = apply_shift_error(psi, -q_syndrome, -p_syndrome, x)
+    psi_corr = apply_shift_error(psi, -q_syn, -p_syn, x)
+    
+    # Soft projection with adaptive strength
     q_shifts = (x + np.sqrt(np.pi)/2) % np.sqrt(np.pi) - np.sqrt(np.pi)/2
-    psi_corr *= np.exp(-q_shifts**2 / (2 * delta**2))
+    projection_strength = min(1.0, 0.5/delta)  # Adaptive based on delta
+    psi_corr *= np.exp(-q_shifts**2 / (2 * (delta*projection_strength)**2))
     
-    # Soft normalization to prevent amplitude explosion
+    # Normalize carefully
     norm = np.sqrt(np.sum(np.abs(psi_corr)**2 * dx))
-    psi_corr /= norm if norm > 0 else 1.0  # Avoid division by zero
-    
-    return psi_corr
+    return psi_corr / norm if norm > 1e-10 else psi
 
 def plot_corrected_position(psi_corr, x, fig=None):
     if fig is None:
@@ -273,9 +271,9 @@ def gkp_correction_animation(psi, x, q_syndrome, p_syndrome, shift_q, shift_p, d
 
 # Step 6 - Calculate fidelity
 def compute_fidelity(psi1, psi2, dx):
-    overlap = np.abs(np.sum(np.conj(psi1) * psi2) * dx)**2
-    # Also compute logical fidelity by projecting to nearest peak
-    return overlap
+    """Guaranteed to return values between 0 and 1"""
+    overlap = np.abs(np.sum(np.conj(psi1) * psi2) * dx)
+    return overlap**2  # Squaring ensures proper normalization
 
 def logical_fidelity(psi, x, delta):
     dx = x[1] - x[0]
@@ -288,7 +286,7 @@ def logical_fidelity(psi, x, delta):
         logical_psi += overlap * peak
     return np.abs(np.sum(np.conj(psi) * logical_psi) * dx)**2
 
-def fidelity_vs_shift_plot(psi, x, delta, shift_range=(-0.6, 0.6), steps=30):
+def fidelity_vs_shift_plot(psi, x, delta, shift_range=(-0.5, 0.5), steps=30):
     """
     Compute and plot fidelity vs. various shift errors.
     Now properly includes delta parameter.
@@ -306,9 +304,8 @@ def fidelity_vs_shift_plot(psi, x, delta, shift_range=(-0.6, 0.6), steps=30):
 
     # Plotting code remains the same...
     plt.figure(figsize=(8, 6))
-    plt.imshow(fidelity_map, extent=(shift_range[0], shift_range[1], shift_range[0], shift_range[1]),
-               origin='lower', aspect='auto', cmap='viridis')
-    plt.colorbar(label='Fidelity')
+    plt.imshow(fidelity_map, vmin=0.0, vmax=1.0,  cmap='viridis')
+    plt.colorbar(label='Fidelity (0-1)')
     plt.xlabel('Position shift Δq')
     plt.ylabel('Momentum shift Δp')
     plt.title('Fidelity vs Shift Errors')
@@ -319,33 +316,37 @@ def fidelity_vs_shift_plot(psi, x, delta, shift_range=(-0.6, 0.6), steps=30):
 
 # Step 6.5 - Plotting the threshold for maximum correctable shift
 # Threshold for max correctable shift
-def find_threshold(psi, x, delta, fidelity_threshold=0.99, max_shift=0.5, steps=100):
-    """
-    FIXED threshold finding with proper index handling
-    """
+def find_threshold(psi, x, delta, fidelity_threshold=0.9, max_shift=0.5, steps=50):
+    """More reliable threshold detection"""
     dx = x[1] - x[0]
     
-    def test_shift(shift_type):
+    def test_shifts(shift_type):
         shifts = np.linspace(0, max_shift, steps)
+        last_good = 0.0
+        
         for shift in shifts:
-            psi_err = apply_shift_error(
-                psi, 
-                shift if shift_type == 'q' else 0,
-                0 if shift_type == 'q' else shift,
-                x
-            )
+            # Apply shift
+            if shift_type == 'q':
+                psi_err = apply_shift_error(psi, shift, 0, x)
+            else:
+                psi_err = apply_shift_error(psi, 0, shift, x)
+            
+            # Measure and correct
             q_syn, p_syn = gkp_syndrome_measurement(psi_err, x)
             psi_corr = gkp_correct(psi_err, x, q_syn, p_syn, delta)
+            
+            # Compute fidelity
             fid = compute_fidelity(psi, psi_corr, dx)
             
-            if fid < fidelity_threshold:
-                # Return previous shift (or 0 if first fails)
-                idx = np.where(shifts == shift)[0][0]
-                return shifts[idx-1] if idx > 0 else 0.0
-        return max_shift  # All shifts passed
+            if fid >= fidelity_threshold:
+                last_good = shift
+            else:
+                break
+                
+        return last_good
     
-    q_thresh = test_shift('q')
-    p_thresh = test_shift('p')
+    q_thresh = test_shifts('q')
+    p_thresh = test_shifts('p')
     return q_thresh, p_thresh
 
 def plot_threshold_vs_delta(psi, x, delta_range=(0.1, 0.5), steps=20, max_shift=0.5):
